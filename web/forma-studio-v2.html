@@ -2885,7 +2885,9 @@ function DesignTab({ pendingDesignPrompt, onPendingDesignPromptConsumed, landing
     setTxt(pendingDesignPrompt.prompt || '');
     const sourceLabel = pendingDesignPrompt._source === 'audit'
       ? (pendingDesignPrompt._kind === 'enhanced' ? '已從體檢 & 增強套用 AI 增強版' : '已從體檢 & 增強套用')
-      : '已從提示詞庫套用';
+      : pendingDesignPrompt._source === 'style'
+        ? '已從風格實驗室套用'
+        : '已從提示詞庫套用';
     setPendingNotice(`${sourceLabel}：${pendingDesignPrompt.title || pendingDesignPrompt.id || 'prompt'}`);
     goStep(1);
     onPendingDesignPromptConsumed?.();
@@ -3409,6 +3411,24 @@ n: ${thinking ? 4 : 2}`
         <div id="dt-step-4" className={sc(4)}>
           <StepBadge n={4} label="風格與生成"/>
           <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-5">
+
+            {/* v2.0 Sprint 3: Style Studio 入口提示 — 引導不會手動組風格的使用者用 chips */}
+            {goTab && (
+              <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                <div className="flex items-start gap-2 text-xs text-amber-200 leading-relaxed">
+                  <span className="text-base shrink-0">💡</span>
+                  <div className="flex-1">
+                    <span className="font-bold text-amber-300">不確定要怎麼組合風格、品牌、哲學？</span>
+                    <span className="text-slate-300 ml-1">可以先去 🎬 風格實驗室 用 5 類別 chips 組好（人像 / 海報 / UI / 角色 / 醫學圖解），按「→ 套用到 Claude Design」會自動帶回這裡。</span>
+                  </div>
+                  <button onClick={()=>goTab('style')}
+                    title="切到風格實驗室用 chips 快速組"
+                    className="shrink-0 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-900 transition-all">
+                    🎬 開啟風格實驗室
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* 設計靈感品牌 */}
             <div className="mb-4 bg-slate-900/40 rounded-xl border border-slate-700/60 p-3">
@@ -4316,6 +4336,427 @@ function AuditTab({ onApply, pendingText, clearPendingText }) {
 }
 
 /* ─────────────────────────────────────
+   v2.0 Sprint 3 — TAB G: Style Studio（5 類別 + 風格 chips + size/quality 撥盤）
+   從 saved JSX 提取：5 類別 chips、英文 prompt 組裝、Claude Design / Audit 雙橋接。
+───────────────────────────────────── */
+const STYLE_SIZES = [
+  { id:'square', label:'1:1 正方', en:'1024x1024', desc:'IG 貼文 / 頭像' },
+  { id:'portrait', label:'2:3 直式', en:'1024x1536', desc:'手機壁紙 / 海報' },
+  { id:'landscape', label:'3:2 橫式', en:'1536x1024', desc:'桌面 / Hero / Cover' },
+];
+
+const STYLE_QUALITIES = [
+  { id:'low', label:'low', cost:'≈ $0.005', en:'standard quality' },
+  { id:'medium', label:'medium', cost:'≈ $0.04', en:'high quality, sharp details' },
+  { id:'high', label:'high', cost:'≈ $0.17', en:'production-quality, ultra-sharp, hi-res' },
+];
+
+const STYLE_CATEGORIES = [
+  {
+    id:'photo',
+    label:'人像 / 商業攝影',
+    icon:'📷',
+    desc:'人物肖像、產品攝影、空間紀實、品牌情境照',
+    placeholder:'例：產品商業攝影、品牌人像照、咖啡店空間情境照、辦公室團體照',
+    leadIn:'Photorealistic photograph of',
+    negatives:'no lorem ipsum, no fake logos, no purple gradients, no AI plastic look',
+    groups:[
+      { key:'lighting', label:'光線氛圍', options:[
+        { id:'studio', label:'攝影棚柔光', en:'studio softbox lighting, large key light from camera-left, gentle fill from right' },
+        { id:'natural', label:'自然窗光', en:'natural window light, soft directional, gentle shadows' },
+        { id:'golden', label:'黃金時刻', en:'golden hour sunlight, warm rim light, long shadows' },
+        { id:'overcast', label:'陰天柔光', en:'overcast diffused daylight, even soft shadows' },
+        { id:'dramatic', label:'戲劇對比', en:'dramatic chiaroscuro lighting, deep shadows, single hard light source' },
+        { id:'clean', label:'室內白光', en:'bright clean interior lighting, neutral 5000K daylight balance, even illumination' },
+      ]},
+      { key:'angle', label:'拍攝角度', options:[
+        { id:'front', label:'正面', en:'front-facing eye-level shot' },
+        { id:'three-q', label:'3/4 側面', en:'three-quarter angle, slight head tilt' },
+        { id:'profile', label:'側面', en:'pure profile silhouette shot' },
+        { id:'low', label:'低角度', en:'low-angle shot, hero perspective' },
+        { id:'overhead', label:'俯視', en:'overhead flatlay, top-down composition' },
+      ]},
+      { key:'lens', label:'鏡頭焦段', options:[
+        { id:'35', label:'35mm 環境', en:'35mm equivalent lens, wider environmental context' },
+        { id:'50', label:'50mm 自然', en:'50mm equivalent lens, natural human-eye perspective' },
+        { id:'85', label:'85mm 人像', en:'85mm equivalent portrait lens, shallow depth of field, creamy bokeh' },
+        { id:'macro', label:'100mm 微距', en:'100mm macro lens, extreme close-up details' },
+      ]},
+      { key:'mood', label:'氣質基調', options:[
+        { id:'warm-pro', label:'溫暖專業', en:'warm professional tone, approachable yet competent mood' },
+        { id:'editorial', label:'編輯雜誌', en:'editorial fashion magazine aesthetic, refined composition' },
+        { id:'candid', label:'生活紀實', en:'candid documentary feel, unposed natural moment' },
+        { id:'corporate', label:'冷調企業', en:'cool corporate tone, clean modern atmosphere' },
+      ]},
+    ],
+  },
+  {
+    id:'poster',
+    label:'海報 / 插畫',
+    icon:'🎨',
+    desc:'活動海報、產品上市、品牌主視覺、社群封面、衛教插畫',
+    placeholder:'例：咖啡店開幕海報、新品上市插畫、IG 限動封面、課程招生海報',
+    leadIn:'Editorial poster design featuring',
+    negatives:'no generic card walls, no emoji icons, no purple-to-pink gradients, no fake metallic effects',
+    groups:[
+      { key:'style', label:'風格流派', options:[
+        { id:'swiss', label:'瑞士國際風', en:'Swiss International style, grid-based layout, sans-serif typography, asymmetric balance' },
+        { id:'minimal', label:'極簡留白', en:'minimal poster design, generous whitespace, restrained color palette' },
+        { id:'80s', label:'80 年代復古', en:'1980s retro poster aesthetic, bold gradients, chunky type, neon accents' },
+        { id:'art-deco', label:'裝飾藝術', en:'Art Deco poster style, geometric ornament, gold accents, symmetric grandeur' },
+        { id:'hand-draw', label:'溫暖手繪', en:'hand-drawn illustration poster, watercolor or gouache textures, organic shapes' },
+        { id:'collage', label:'拼貼前衛', en:'editorial collage style, mixed media, cut-paper layering' },
+      ]},
+      { key:'palette', label:'色彩配色', options:[
+        { id:'mono', label:'單色', en:'monochrome palette, single hue with tints and shades' },
+        { id:'duotone', label:'雙色對比', en:'duotone palette, two strong contrasting colors' },
+        { id:'pastel', label:'粉彩柔和', en:'pastel palette, soft muted tones, dusty pink + sage + cream' },
+        { id:'earth', label:'大地色', en:'earth tone palette, terracotta + ochre + olive + cream' },
+        { id:'vibrant', label:'高彩飽和', en:'vibrant saturated palette, electric primary colors with high contrast' },
+        { id:'mint-cream', label:'薄荷奶油', en:'soft mint green and warm cream palette, calm and approachable feel' },
+      ]},
+      { key:'layout', label:'版面構成', options:[
+        { id:'grid', label:'格線', en:'strict grid layout, modular composition' },
+        { id:'centered', label:'中央對稱', en:'centered symmetric composition, hierarchy radiates from center' },
+        { id:'asym', label:'非對稱', en:'asymmetric dynamic layout, weighted negative space' },
+        { id:'bleed', label:'滿版圖像', en:'full-bleed photographic background, text overlay top-third' },
+        { id:'typo-led', label:'字體主導', en:'typography-led poster, large display type as hero element' },
+      ]},
+      { key:'type', label:'字體', options:[
+        { id:'serif', label:'襯線優雅', en:'classic serif typography, elegant editorial' },
+        { id:'sans', label:'無襯線現代', en:'modern sans-serif typography, geometric clarity' },
+        { id:'display', label:'裝飾大標', en:'bold display type as focal point, custom letterforms' },
+        { id:'mixed', label:'serif + sans', en:'mixed typography pairing, large serif headline + small sans body' },
+      ]},
+    ],
+  },
+  {
+    id:'ui',
+    label:'UI / 產品介面',
+    icon:'💻',
+    desc:'App mockup、SaaS 介面、官網設計、Dashboard',
+    placeholder:'例：行動 App 首頁、營運 Dashboard、SaaS 設定頁、官網 Hero',
+    leadIn:'Polished UI mockup of',
+    negatives:'no lorem ipsum, no fake logos, no generic card walls, no emoji icons',
+    groups:[
+      { key:'platform', label:'平台', options:[
+        { id:'ios', label:'iOS App', en:'iOS smartphone screen 1290x2796, front-facing device frame, soft drop shadow' },
+        { id:'android', label:'Android App', en:'Android smartphone screen 1080x2400, Material Design 3 spec' },
+        { id:'web', label:'Web 桌面', en:'desktop web browser frame at 1920x1080, Chrome chrome top' },
+        { id:'tablet', label:'iPad / 平板', en:'iPad landscape screen 2732x2048, tablet device frame' },
+        { id:'dashboard', label:'營運 Dashboard', en:'desktop SaaS dashboard at 1920x1080, dense data visualization layout' },
+      ]},
+      { key:'theme', label:'主題', options:[
+        { id:'light', label:'淺色', en:'light theme, off-white background #FAFAFA, ink-black foreground #1A1A1A' },
+        { id:'dark', label:'深色', en:'dark theme, near-black background #0F0F12, soft white foreground' },
+        { id:'glass', label:'毛玻璃', en:'glassmorphism, frosted blur backgrounds, subtle transparency' },
+        { id:'flat', label:'扁平', en:'flat design, no shadows or gradients, bold solid colors' },
+      ]},
+      { key:'palette', label:'品牌配色', options:[
+        { id:'navy-mint', label:'深藍 + 薄荷', en:'deep navy primary, mint green accent, warm gray neutrals' },
+        { id:'mono', label:'純黑白灰', en:'pure monochrome, black + white + 3 gray steps' },
+        { id:'soft-brand', label:'品牌柔和', en:'soft mint + cream + dusty rose, calm and approachable brand palette' },
+        { id:'fintech', label:'金融科技', en:'electric blue + pure white + slate gray, fintech aesthetic' },
+      ]},
+      { key:'density', label:'資訊密度', options:[
+        { id:'compact', label:'高密度', en:'compact information density, dense data tables, small spacing' },
+        { id:'comfort', label:'舒適', en:'comfortable spacing, balanced information density' },
+        { id:'spacious', label:'寬鬆', en:'spacious whitespace-led layout, large card hit-areas' },
+      ]},
+      { key:'detail', label:'細節', options:[
+        { id:'rounded', label:'圓角', en:'12-16pt rounded corners on all surfaces' },
+        { id:'sharp', label:'銳利方正', en:'sharp 0pt corners, geometric precision' },
+        { id:'neumorph', label:'新擬態', en:'neumorphic soft inner/outer shadows on raised surfaces' },
+      ]},
+    ],
+  },
+  {
+    id:'character',
+    label:'角色 / 吉祥物',
+    icon:'👤',
+    desc:'品牌吉祥物、代言角色、頭像、Line 貼圖',
+    placeholder:'例：品牌吉祥物、Line 貼圖角色、活動代言人、虛擬主播形象',
+    leadIn:'Character design of',
+    negatives:'no off-model anatomy, no extra fingers, no melted features, no purple gradient backgrounds',
+    groups:[
+      { key:'medium', label:'媒材風格', options:[
+        { id:'3d', label:'3D 渲染', en:'3D rendered character, physically-based materials, soft studio lighting' },
+        { id:'flat', label:'2D 扁平', en:'2D flat vector illustration, bold outlines' },
+        { id:'water', label:'水彩', en:'watercolor character illustration, organic edges' },
+        { id:'pixel', label:'像素藝術', en:'pixel art character, 32x32 or 48x48 sprite, limited palette' },
+        { id:'anime', label:'日系動漫', en:'anime style character, clean line art, cel-shaded coloring' },
+        { id:'pop-mart', label:'盲盒 / Pop Mart', en:'designer toy / Pop Mart blind-box style, glossy plastic finish' },
+      ]},
+      { key:'personality', label:'個性氣質', options:[
+        { id:'friendly', label:'親切友善', en:'friendly approachable expression, warm smile' },
+        { id:'pro', label:'專業可靠', en:'professional confident posture, trustworthy demeanor' },
+        { id:'quirky', label:'俏皮古怪', en:'quirky playful personality, mischievous expression' },
+        { id:'cute', label:'可愛萌', en:'kawaii cute aesthetic, big eyes, soft proportions' },
+      ]},
+      { key:'pose', label:'姿勢', options:[
+        { id:'standing', label:'站姿', en:'standing front-facing pose, T-pose neutral' },
+        { id:'portrait', label:'胸像', en:'shoulders-up portrait, eye contact with camera' },
+        { id:'action', label:'動作', en:'dynamic action pose, mid-motion' },
+        { id:'sitting', label:'坐姿', en:'seated relaxed pose' },
+        { id:'wave', label:'招手', en:'waving hello pose, friendly greeting gesture' },
+      ]},
+      { key:'bg', label:'背景', options:[
+        { id:'transparent', label:'透明背景', en:'transparent background, no scene, isolated subject' },
+        { id:'solid', label:'純色', en:'solid pastel background, single flat color' },
+        { id:'studio', label:'攝影棚', en:'soft gradient studio backdrop, neutral cyc' },
+        { id:'scene', label:'情境', en:'contextual scene background, narrative environment' },
+      ]},
+    ],
+  },
+  {
+    id:'medical',
+    label:'醫學圖解 / 衛教',
+    icon:'🩺',
+    desc:'解剖示意、手術步驟、患者衛教、診所教材',
+    placeholder:'例：植牙手術步驟圖、牙周病進展示意、矯正 before-after',
+    leadIn:'Medical textbook illustration of',
+    negatives:'no inaccurate anatomy, no fictional structures, no purple gradients, no decorative emoji',
+    groups:[
+      { key:'style', label:'圖解風格', options:[
+        { id:'textbook', label:'教科書精細', en:'Netter-style medical textbook illustration, precise anatomical accuracy, fine line art' },
+        { id:'patient', label:'患者友善', en:'patient-friendly simplified illustration, soft warm colors, approachable not intimidating' },
+        { id:'surgical', label:'手術細節', en:'surgical procedure diagram, step-by-step with labels, clinical precision' },
+        { id:'cross', label:'剖面截圖', en:'cross-section cutaway view, layered tissue structures clearly separated' },
+        { id:'flat-info', label:'扁平資訊圖', en:'flat infographic style, clean iconography, structured visual hierarchy' },
+      ]},
+      { key:'palette', label:'色調', options:[
+        { id:'clinical', label:'臨床白', en:'clinical white background, anatomically accurate tissue colors' },
+        { id:'warm-edu', label:'溫暖衛教', en:'warm pastel palette, soft pink + cream + mint, calm patient-education tone' },
+        { id:'mono', label:'單色線稿', en:'monochrome ink line art, technical precision' },
+        { id:'duotone', label:'雙色對比', en:'duotone palette, single brand color + neutral, focused emphasis' },
+      ]},
+      { key:'detail', label:'內容細節', options:[
+        { id:'labeled', label:'解剖標註', en:'labeled anatomy with leader lines, in-image text labels for each structure' },
+        { id:'steps', label:'步驟編號', en:'numbered procedure steps 1/2/3/4, sequential layout left-to-right' },
+        { id:'compare', label:'對照前後', en:'before / after side-by-side comparison, clear delta indication' },
+        { id:'callout', label:'放大區塊', en:'magnified callout circle highlighting detail area' },
+      ]},
+      { key:'audience', label:'對象', options:[
+        { id:'doctor', label:'醫師專業', en:'professional clinical audience, technical terminology in labels' },
+        { id:'patient-tw', label:'台灣患者', en:'Taiwanese patient audience, in-image text in Traditional Chinese, lay-friendly explanations' },
+        { id:'student', label:'醫學生', en:'medical student audience, balanced detail with clear pedagogical structure' },
+        { id:'kid', label:'兒童 / 家長', en:'child-friendly version, soft rounded shapes, gentle educational tone' },
+      ]},
+    ],
+  },
+];
+
+function StyleChipGroup({ group, selected, onToggle }) {
+  return (
+    <div>
+      <div className="text-[11px] text-slate-500 mb-1.5 font-semibold">{group.label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {group.options.map(o => {
+          const active = selected.includes(o.id);
+          return (
+            <button key={o.id} onClick={()=>onToggle(group.key, o.id)}
+              title={o.en}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border ${active?'bg-yellow-500 text-slate-900 border-yellow-500':'bg-slate-900 text-slate-300 border-slate-700 hover:border-yellow-500/50 hover:text-yellow-400'}`}>
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function buildStylePrompt({ category, subject, picks, sizeId, qualityId }) {
+  const cat = STYLE_CATEGORIES.find(c => c.id === category);
+  if (!cat) return '';
+  const size = STYLE_SIZES.find(s => s.id === sizeId);
+  const quality = STYLE_QUALITIES.find(q => q.id === qualityId);
+  const fragments = [];
+  cat.groups.forEach(g => {
+    const ids = picks[g.key] || [];
+    ids.forEach(id => {
+      const opt = g.options.find(o => o.id === id);
+      if (opt) fragments.push(opt.en);
+    });
+  });
+  const subjectClean = subject?.trim() || '[YOUR SUBJECT HERE]';
+  const sizeStr = size ? ` Size: ${size.en} (${size.label}).` : '';
+  const qualityStr = quality ? ` ${quality.en}.` : '';
+  const fragStr = fragments.length ? ' ' + fragments.join('. ') + '.' : '';
+  const negStr = ` ${cat.negatives}.`;
+  return `${cat.leadIn} ${subjectClean}.${fragStr}${sizeStr}${qualityStr}${negStr}`.trim();
+}
+
+function StyleStudioTab({ onApply, onSendAudit }) {
+  const DEFAULT_STYLE_STATE = {
+    cat_id:'poster',
+    subject:'Coffee shop grand opening poster for "AURORA CAFE" with in-image text "Opening 12.15", "Free latte first 100 guests"',
+    picks:{ style:['minimal'], palette:['earth'], layout:['typo-led'], type:['mixed'] },
+    size_id:'portrait',
+    quality_id:'high',
+  };
+  const [catId, setCatId] = useState(DEFAULT_STYLE_STATE.cat_id);
+  const [subject, setSubject] = useState(DEFAULT_STYLE_STATE.subject);
+  const [picks, setPicks] = useState(DEFAULT_STYLE_STATE.picks);
+  const [sizeId, setSizeId] = useState(DEFAULT_STYLE_STATE.size_id);
+  const [qualityId, setQualityId] = useState(DEFAULT_STYLE_STATE.quality_id);
+  const [showHelp, setShowHelp] = useState(true);
+
+  const cat = STYLE_CATEGORIES.find(c => c.id === catId);
+  const togglePick = (groupKey, optId) => {
+    setPicks(prev => {
+      const cur = prev[groupKey] || [];
+      const next = cur.includes(optId) ? cur.filter(x => x !== optId) : [...cur, optId];
+      return { ...prev, [groupKey]: next };
+    });
+  };
+  const switchCategory = id => {
+    setCatId(id);
+    setPicks({});
+    const isDemoSubject = subject === DEFAULT_STYLE_STATE.subject || subject.startsWith('例：') || subject === '';
+    if (isDemoSubject) setSubject('');
+  };
+  const finalPrompt = buildStylePrompt({ category:catId, subject, picks, sizeId, qualityId });
+  const wordCount = finalPrompt.split(/\s+/).filter(Boolean).length;
+  const reset = () => {
+    setPicks({});
+    setSubject('');
+  };
+
+  return (
+    <main className="max-w-5xl mx-auto px-4 py-6 space-y-4">
+      <div>
+        <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+          🎬 風格實驗室
+          <span className="text-xs font-normal text-slate-500">v2.0 · 5 類別 + 風格 chips 組合 prompt</span>
+        </h2>
+      </div>
+
+      {showHelp && (
+        <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/5 p-4">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="text-sm font-bold text-yellow-300">💡 這個 tab 是做什麼的？</div>
+            <button onClick={()=>setShowHelp(false)} className="text-xs text-slate-500 hover:text-slate-300 shrink-0">收起說明 ▲</button>
+          </div>
+          <div className="text-xs text-slate-300 leading-relaxed space-y-2">
+            <p><span className="text-yellow-400 font-bold">用途：</span>不會寫英文 prompt？選類別 + 點 chips，工具自動幫你組裝出完整英文 prompt。下方即時看到結果。</p>
+            <p><span className="text-yellow-400 font-bold">3 步驟：</span><span className="text-slate-100">①</span> 選類別（5 大類）→ <span className="text-slate-100">②</span> 寫主題 + 點風格 chips → <span className="text-slate-100">③</span> 看下方自動組好的英文 prompt，點「→ 套用到 Claude Design」生圖</p>
+          </div>
+        </div>
+      )}
+      {!showHelp && (
+        <button onClick={()=>setShowHelp(true)} className="text-xs text-yellow-400 hover:text-yellow-300 font-semibold">💡 顯示說明 ▼</button>
+      )}
+
+      <div>
+        <div className="text-xs text-slate-500 mb-1.5 font-semibold">① 選類別</div>
+        <div className="grid gap-2 grid-cols-2 md:grid-cols-5">
+          {STYLE_CATEGORIES.map(c => {
+            const active = catId === c.id;
+            return (
+              <button key={c.id} onClick={()=>switchCategory(c.id)}
+                className={`text-left rounded-xl p-3 border transition-all ${active?'bg-yellow-500/10 border-yellow-500':'bg-slate-900 border-slate-700 hover:border-slate-500'}`}>
+                <div className="text-2xl">{c.icon}</div>
+                <div className={`text-sm font-bold mt-1 ${active?'text-yellow-300':'text-slate-200'}`}>{c.label}</div>
+                <div className="text-[10px] text-slate-500 mt-0.5 leading-snug">{c.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs text-slate-500 mb-1.5 font-semibold">② 主題（一句話描述你想做什麼，中英文皆可）</div>
+        <input
+          value={subject}
+          onChange={e=>setSubject(e.target.value)}
+          placeholder={cat?.placeholder || ''}
+          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm text-slate-200 placeholder-slate-500 focus:border-yellow-500 focus:outline-none"
+        />
+      </div>
+
+      {cat && (
+        <div>
+          <div className="text-xs text-slate-500 mb-1.5 font-semibold">③ 風格 chips（多選，可不選；點 chip 看英文 tooltip）</div>
+          <div className="rounded-xl border border-slate-700 bg-slate-900/30 p-4 space-y-3">
+            {cat.groups.map(g => <StyleChipGroup key={g.key} group={g} selected={picks[g.key]||[]} onToggle={togglePick}/>)}
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <div>
+          <div className="text-xs text-slate-500 mb-1.5 font-semibold">④ 尺寸</div>
+          <div className="flex flex-wrap gap-1.5">
+            {STYLE_SIZES.map(s => (
+              <button key={s.id} onClick={()=>setSizeId(s.id)}
+                title={`${s.en} · ${s.desc}`}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border ${sizeId===s.id?'bg-yellow-500 text-slate-900 border-yellow-500':'bg-slate-900 text-slate-300 border-slate-700 hover:border-yellow-500/50'}`}>
+                {s.label} <span className="opacity-60 text-[10px]">{s.en}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500 mb-1.5 font-semibold">⑤ 品質（影響成本）</div>
+          <div className="flex flex-wrap gap-1.5">
+            {STYLE_QUALITIES.map(q => (
+              <button key={q.id} onClick={()=>setQualityId(q.id)}
+                title={q.en}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border ${qualityId===q.id?'bg-yellow-500 text-slate-900 border-yellow-500':'bg-slate-900 text-slate-300 border-slate-700 hover:border-yellow-500/50'}`}>
+                {q.label} <span className="opacity-60 text-[10px]">{q.cost}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
+        <div className="text-xs text-amber-200 leading-relaxed">
+          <span className="font-bold text-amber-300">⚠️ 注意：</span>
+          下方產出的是<span className="text-amber-300 font-bold">英文 prompt 文字</span>，不是圖片。
+          需要複製到 <span className="text-slate-200 font-semibold">GPT Image 2 / Midjourney / DALL·E</span> 等 AI 生圖工具才會出圖。
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-4">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="text-sm font-bold text-emerald-300 flex items-center gap-2">
+            ✨ 自動組好的英文 prompt
+            <span className="text-[10px] text-slate-500 font-normal">{wordCount} 字</span>
+          </div>
+          <CopyBtn text={finalPrompt} sm/>
+        </div>
+        <textarea
+          value={finalPrompt}
+          readOnly
+          rows={6}
+          className="w-full px-3 py-2 rounded-lg bg-slate-950/50 border border-slate-800 text-xs text-slate-200 leading-relaxed font-mono focus:border-emerald-500 focus:outline-none"
+          lang="en"
+        />
+        <div className="mt-2 text-[10px] text-slate-500 leading-relaxed">💡 改主題或 chips 會即時更新這段 prompt。</div>
+      </div>
+
+      <NextStepCard tone="emerald"
+        done="✅ 完成這步：英文 prompt 已組好"
+        next={
+          <ol className="list-decimal list-inside space-y-0.5 text-slate-200">
+            <li>想直接生圖 → 點上方 <span className="text-yellow-400 font-semibold">📋 複製</span>，貼到 GPT Image 2 / Midjourney</li>
+            <li>想先看分數 → 點下方 <span className="text-purple-300 font-semibold">🩺 送去體檢</span>（會切到體檢 tab 自動跑）</li>
+            <li>想交給 Claude Design 完整流程 → 點 <span className="text-emerald-300 font-semibold">→ 套用到 Claude Design</span>（會切 tab + 自動填欄位）</li>
+          </ol>
+        }
+        actions={[
+          { label:'套用到 Claude Design', icon:'→', primary:true, onClick:()=>onApply(finalPrompt), title:'切 tab + 把 prompt 自動填到圖像描述欄' },
+          { label:'送去體檢', icon:'🩺', onClick:()=>onSendAudit(finalPrompt), title:'切到 🩺 體檢 tab 看 8 維度分數' },
+          { label:'清空 chips', icon:'✕', onClick:reset, title:'重置主題與所有風格 chips（保留類別與尺寸）' },
+        ]}
+      />
+    </main>
+  );
+}
+
+/* ─────────────────────────────────────
    TAB D: 彩蛋 Lab
 ───────────────────────────────────── */
 function LabTab({ goTab }) {
@@ -4448,6 +4889,7 @@ function App() {
     {id:'nlm',   label:'📑 NotebookLM'},
     {id:'promptlab', label:'📚 提示詞庫'},
     {id:'audit', label:'🩺 體檢 & 增強'},
+    {id:'style', label:'🎬 風格實驗室'},
     {id:'lab',   label:'彩蛋 🧪'},
   ];
 
@@ -4525,6 +4967,35 @@ function App() {
     });
   };
 
+  const applyStyleToDesign = text => {
+    setPendingDesignPrompt({
+      id: 'style-studio-prompt',
+      title: 'Style Studio 英文 prompt',
+      prompt: text,
+      _source: 'style',
+    });
+    goTab('design', {
+      targetTab:'design',
+      sourceTab:'style',
+      sourceLabel:'風格實驗室',
+      title:'已套用風格實驗室組好的英文 prompt',
+      body:'目標：Claude Design Step 1。已預填由 5 類別 chips 組好的英文 prompt，可先檢查內容再繼續設計流程。',
+      tone:'amber',
+    });
+  };
+
+  const sendStyleToAudit = text => {
+    goTab('audit', {
+      targetTab:'audit',
+      sourceTab:'style',
+      sourceLabel:'風格實驗室',
+      title:'來自風格實驗室的英文 prompt',
+      body:'已帶入體檢 & 增強頁，請看 8 維度分數與可補強處。',
+      prompt:text,
+      tone:'amber',
+    });
+  };
+
   return (
     <ApiCtx.Provider value={{ key:apiKey, setKey:setApiKey }}>
       <div className="min-h-screen text-slate-200">
@@ -4566,6 +5037,7 @@ function App() {
         />}
         {tab==='promptlab' && <PromptLabTab onApplyToDesign={applyPromptToDesign} goTab={goTab}/>}
         {tab==='audit'  && <AuditTab onApply={applyAuditToDesign} pendingText={pendingAuditText} clearPendingText={()=>setPendingAuditText(null)}/>}
+        {tab==='style'  && <StyleStudioTab onApply={applyStyleToDesign} onSendAudit={sendStyleToAudit}/>}
         {tab==='lab'    && <LabTab goTab={goTab}/>}
       </div>
     </ApiCtx.Provider>
