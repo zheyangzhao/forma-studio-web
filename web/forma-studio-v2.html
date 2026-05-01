@@ -316,8 +316,10 @@ function OutBox({ text, label, hint, badge='yellow', onTextChange }) {
   );
 }
 
-function NextStepCard({ tone='emerald', title, body, steps=[], actions=[] }) {
-  if (!title && !body && !steps.length && !actions.length) return null;
+function NextStepCard({ tone='emerald', title, body, steps=[], actions=[], done, next, tip }) {
+  const displayTitle = title || done;
+  const displayBody = body || next;
+  if (!displayTitle && !displayBody && !steps.length && !actions.length && !tip) return null;
   const toneClass = {
     emerald: 'border-emerald-500/40 bg-emerald-950/25 shadow-emerald-900/20',
     amber:   'border-amber-500/40 bg-amber-950/25 shadow-amber-900/20',
@@ -342,7 +344,7 @@ function NextStepCard({ tone='emerald', title, body, steps=[], actions=[] }) {
     if (action.kind === 'disabled' || action.disabledReason) {
       return 'border border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed';
     }
-    if (action.kind === 'primary') {
+    if (action.kind === 'primary' || action.primary) {
       return 'bg-yellow-500 hover:bg-yellow-400 text-slate-900 shadow-lg shadow-yellow-500/10';
     }
     return 'border border-slate-600 bg-slate-900/45 text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200';
@@ -350,8 +352,12 @@ function NextStepCard({ tone='emerald', title, body, steps=[], actions=[] }) {
 
   return (
     <div className={`fade-in rounded-xl border p-3.5 mb-4 shadow-lg ${toneClass}`}>
-      {title && <div className={`text-sm font-black ${titleClass}`}>{title}</div>}
-      {body && <p className="mt-1 text-xs leading-relaxed text-slate-300">{body}</p>}
+      {displayTitle && <div className={`text-sm font-black ${titleClass}`}>{displayTitle}</div>}
+      {displayBody && (
+        <div className="mt-1 text-xs leading-relaxed text-slate-300">
+          {displayBody}
+        </div>
+      )}
       {steps.length > 0 && (
         <ol className="mt-3 grid gap-1.5 text-xs text-slate-300">
           {steps.map((step, idx) => (
@@ -371,11 +377,12 @@ function NextStepCard({ tone='emerald', title, body, steps=[], actions=[] }) {
               title={action.disabledReason || action.title || ''}
               disabled={!!action.disabledReason || action.kind === 'disabled'}
               className={`rounded-lg px-3 py-2 text-xs font-bold transition-all ${actionClass(action)}`}>
-              {action.label}
+              {action.icon ? `${action.icon} ` : ''}{action.label}
             </button>
           ))}
         </div>
       )}
+      {tip && <div className="mt-2 text-[10px] text-slate-500 leading-relaxed">{tip}</div>}
     </div>
   );
 }
@@ -1281,7 +1288,7 @@ function TextWithFile({ value, onChange, placeholder, rows=3, label, tip, id, ac
   );
 }
 
-function SmartTab({ goTab }) {
+function SmartTab({ goTab, onSendAudit }) {
   /* ── 狀態 ── */
   const [txt,       setTxt]       = useState('');
   const [fileInfo,  setFileInfo]  = useState(null);   // { name, type, content }
@@ -1800,6 +1807,7 @@ Step 5 · 固化 brand-spec.md（CSS var(--brand-*)）
                   body: '上方已生成初稿 prompt。請回來複製內容，貼到目標工具的對應欄位繼續精修。',
                   tone: isDesignSub ? 'emerald' : 'cyan',
                 }) },
+                { label: '送去體檢', kind:'secondary', onClick:()=>onSendAudit?.(out, '智慧製圖') },
                 { label: smartNext.copy, kind:'secondary', onClick:copySmartOut },
                 { label: '重新開始', kind:'secondary', onClick:resetSmart },
               ]}
@@ -2173,6 +2181,15 @@ ${qt[qm]}
                 actions={[
                   { label:'複製自定義指示', kind:'primary', onClick:()=>navigator.clipboard?.writeText(customInstruction).catch(()=>{}) },
                   { label:'複製任務指令', kind:'secondary', onClick:()=>navigator.clipboard?.writeText(prompt).catch(()=>{}) },
+                  { label:'送去體檢', kind:'secondary', onClick:()=>goTab?.('audit', {
+                    targetTab:'audit',
+                    sourceTab:'nlm',
+                    sourceLabel:'NotebookLM',
+                    title:'來自 NotebookLM 的任務指令',
+                    body:'已把任務指令送到體檢頁，請看 8 維度分數與可補強處。',
+                    prompt,
+                    tone:'cyan',
+                  }) },
                   { label:'回 Smart 重新分類', kind:'secondary', onClick:()=>goTab?.('smart') },
                 ]}
               />
@@ -2866,7 +2883,10 @@ function DesignTab({ pendingDesignPrompt, onPendingDesignPromptConsumed, landing
   useEffect(() => {
     if (!pendingDesignPrompt) return;
     setTxt(pendingDesignPrompt.prompt || '');
-    setPendingNotice(`已從提示詞庫套用：${pendingDesignPrompt.title || pendingDesignPrompt.id}`);
+    const sourceLabel = pendingDesignPrompt._source === 'audit'
+      ? (pendingDesignPrompt._kind === 'enhanced' ? '已從體檢 & 增強套用 AI 增強版' : '已從體檢 & 增強套用')
+      : '已從提示詞庫套用';
+    setPendingNotice(`${sourceLabel}：${pendingDesignPrompt.title || pendingDesignPrompt.id || 'prompt'}`);
     goStep(1);
     onPendingDesignPromptConsumed?.();
   }, [pendingDesignPrompt]);
@@ -3504,6 +3524,15 @@ n: ${thinking ? 4 : 2}`
                     { label:'複製圖像 prompt', kind:'primary', onClick:()=>navigator.clipboard?.writeText(out).catch(()=>{}) },
                     { label:'回 Step 3 調整', kind:'secondary', onClick:()=>goStep(3) },
                     { label:'到 Prompt Lab 找參考', kind:'secondary', onClick:()=>goTab?.('promptlab') },
+                    { label:'送去體檢', kind:'secondary', onClick:()=>goTab?.('audit', {
+                      targetTab:'audit',
+                      sourceTab:'design',
+                      sourceLabel:'Claude Design',
+                      title:'來自 Claude Design 的 prompt',
+                      body:'已把 Step 4 產出的圖像 prompt 送到體檢頁，請看 8 維度分數。',
+                      prompt: out,
+                      tone:'amber',
+                    }) },
                   ]}
                 />
               </div>
@@ -3622,7 +3651,7 @@ async function loadPromptLibrary() {
   return { index, categories:index.categories, prompts, warnings };
 }
 
-function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesign }) {
+function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesign, onSendToAudit }) {
   const tags = [
     item.categoryTitleZh,
     ...(item.industries || []).slice(0, 3),
@@ -3703,7 +3732,7 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
         <button onClick={onToggle}
           className="min-w-0 rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200">
           {expanded ? '收合' : '展開'}
@@ -3715,6 +3744,10 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
         <button onClick={() => onApplyToDesign(item)}
           className="min-w-0 rounded-lg bg-yellow-500 px-2 py-2 text-xs font-black leading-snug text-slate-900 hover:bg-yellow-400">
           套用英文 prompt 到 Claude Design（套用到 Claude Design）
+        </button>
+        <button onClick={() => onSendToAudit?.(item)}
+          className="min-w-0 rounded-lg border border-purple-500/50 bg-purple-500/10 px-2 py-2 text-xs font-black leading-snug text-purple-200 hover:bg-purple-500/20">
+          🩺 送去體檢
         </button>
       </div>
     </article>
@@ -3889,8 +3922,393 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
               onCopy={copyPrompt}
               copied={copiedId === item.id}
               onApplyToDesign={onApplyToDesign}
+              onSendToAudit={item => goTab?.('audit', {
+                targetTab:'audit',
+                sourceTab:'promptlab',
+                sourceLabel:'Prompt Lab 提示詞庫',
+                title:'來自 Prompt Lab 的英文 prompt',
+                body:`來源：${item.titleZh || item.title}。已帶入 Audit 進行 8 維度體檢。`,
+                prompt:item.englishPrompt,
+                tone:'amber',
+              })}
             />
           ))}
+        </div>
+      )}
+    </main>
+  );
+}
+
+/* ─────────────────────────────────────
+   v2.0 Sprint 2 — TAB: Audit & Enhance
+   依 saved JSX craft.md §19 final audit：本地 8 維度體檢；AI 增強需 OpenAI key。
+───────────────────────────────────── */
+const PLAB_SLOP_RED_FLAGS = [
+  'purple gradient', 'pink to purple', 'gradient mesh',
+  'generic card', 'card wall', 'grid of cards',
+  'emoji icon', 'fake logo', 'lorem ipsum',
+  'stunning', 'breathtaking', 'mind-blowing',
+];
+
+function runAudit(rawText) {
+  const text = (rawText || '').trim();
+  const lower = text.toLowerCase();
+  const wordCount = text ? text.split(/\s+/).length : 0;
+  const has = re => re.test(lower);
+  const hasOrig = re => re.test(text);
+
+  const checks = [
+    {
+      key: 'intent',
+      label: '任務意圖',
+      icon: '🎯',
+      desc: 'image / edit / infographic / prototype / brand / poster 等清楚定位',
+      status: has(/\b(image|photo|photograph|illustration|render|infographic|prototype|mockup|brand|poster|diagram|dashboard|chart|logo|avatar|sticker|icon|wallpaper|cover)\b/) ? 'pass' : 'fail',
+      suggest: '加一個動作詞 + 媒材詞，例如「Create a photorealistic photograph of...」「Design a clean dashboard mockup that...」',
+    },
+    {
+      key: 'audience',
+      label: '受眾與情境',
+      icon: '👥',
+      desc: '受眾、使用場景或決策情境',
+      status: (has(/\b(audience|target|for\s+\w+|users?|customers?|patients?|students?|investors?|clients?|readers?|viewers?|professionals?|beginners?)\b/) || has(/(受眾|觀眾|使用者|顧客|病患|學生|讀者)/)) ? 'pass' : 'warn',
+      suggest: '指定受眾，例如「for a B2B SaaS founder」「for a coffee shop grand-opening flyer」「for a children\'s book cover」',
+    },
+    {
+      key: 'message',
+      label: '核心訊息',
+      icon: '💡',
+      desc: '一句話講清楚要傳達什麼',
+      status: wordCount < 20 ? 'fail' : (wordCount < 60 ? 'warn' : 'pass'),
+      suggest: 'prompt 字數應 ≥ 60 字。先寫一句「核心訊息」，再展開構圖細節。目前 ' + wordCount + ' 字。',
+    },
+    {
+      key: 'composition',
+      label: '構圖 / 版面 / 色彩',
+      icon: '🎨',
+      desc: 'composition / layout / typography / color / lighting / material',
+      status: (has(/\b(composition|layout|grid|hierarchy|typography|font|color|palette|lighting|shadow|material|texture|background|foreground|aspect|frame|angle|perspective|depth)\b/) || has(/(構圖|版面|字體|色彩|光線|材質|背景|前景|視角)/)) ? 'pass' : 'warn',
+      suggest: '補構圖/版面/色彩/光線細節，例如「3-column grid, deep navy + warm cream palette, soft window-light from left」',
+    },
+    {
+      key: 'inImageText',
+      label: 'in-image 文字',
+      icon: '📝',
+      desc: '若有文字必須用引號逐字列出',
+      status: hasOrig(/["「『](.{1,80}?)["」』]/) ? 'pass' : (has(/\b(text|label|title|headline|caption|word|number|in-image)\b/) || has(/(文字|標題|標籤)/) ? 'warn' : 'pass'),
+      suggest: '畫面中要出現的文字必須用引號標出，例如 in-image text "AURAE" / "Total balance $12,480.36"。AI 才不會亂寫字。',
+    },
+    {
+      key: 'sizeQuality',
+      label: 'size / quality / 反 negative',
+      icon: '📐',
+      desc: '尺寸、品質、不要什麼',
+      status: (has(/\b(\d{3,4}x\d{3,4}|portrait|landscape|square|4k|hi-?res|high-resolution|production-quality|crisp|sharp)\b/) ? 'pass' : 'warn'),
+      suggest: '指定尺寸（1024x1024 / portrait 1024x1536 / landscape）+ 品質詞（crisp、production-quality）+ 不要什麼（no lorem, no fake logo）',
+    },
+    {
+      key: 'antiSlop',
+      label: '反 AI Slop',
+      icon: '🚫',
+      desc: '避免紫漸變、卡片牆、emoji 圖示、假 logo、不可讀文字',
+      status: (() => {
+        const hits = [];
+        PLAB_SLOP_RED_FLAGS.forEach(k => {
+          let idx = 0;
+          while ((idx = lower.indexOf(k, idx)) !== -1) {
+            const before = lower.slice(Math.max(0, idx - 25), idx);
+            const beforeOrig = text.slice(Math.max(0, idx - 25), idx);
+            const negated = /\b(no|not|without|avoid|skip|exclude|never|don't|do not)\b[^.;]*$/.test(before)
+              || /(不要|避免|沒有|別|不可|禁)[^。；]*$/.test(beforeOrig);
+            if (!negated) hits.push(k);
+            idx += k.length;
+          }
+        });
+        return hits.length === 0 ? 'pass' : 'fail';
+      })(),
+      suggest: '若已含「purple gradient / generic card / emoji icon / stunning」等空話應移除（除非前面有 no / avoid / 不要 等否定詞）。',
+    },
+    {
+      key: 'attribution',
+      label: 'Source attribution',
+      icon: '📎',
+      desc: '若取自他人 prompt 必須保留 credit / by @author',
+      status: has(/\b(by\s+@|author:|credit:|via:|source:)\b/) ? 'pass' : (text.length > 0 ? 'warn' : 'fail'),
+      suggest: '若是自己原創可忽略；若改寫 gallery prompt，請保留作者欄位（例 "Author: @WolfRiccardo"）。',
+    },
+  ];
+
+  const scoreMap = { pass: 100, warn: 50, fail: 0 };
+  const total = checks.reduce((s, c) => s + scoreMap[c.status], 0);
+  const score = Math.round(total / checks.length);
+  const grade = score >= 85 ? 'A' : score >= 70 ? 'B' : score >= 55 ? 'C' : score >= 40 ? 'D' : 'F';
+  const failCount = checks.filter(c => c.status === 'fail').length;
+  const warnCount = checks.filter(c => c.status === 'warn').length;
+  const passCount = checks.filter(c => c.status === 'pass').length;
+
+  return { checks, score, grade, failCount, warnCount, passCount, wordCount };
+}
+
+function AuditCheckRow({ check }) {
+  const [expand, setExpand] = useState(false);
+  const stColor = {
+    pass: { bg:'bg-emerald-500/10', text:'text-emerald-300', border:'border-emerald-500/40', label:'通過', icon:'✅' },
+    warn: { bg:'bg-amber-500/10',   text:'text-amber-300',   border:'border-amber-500/40',   label:'建議補強', icon:'⚠️' },
+    fail: { bg:'bg-rose-500/10',    text:'text-rose-300',    border:'border-rose-500/40',    label:'缺失',   icon:'❌' },
+  }[check.status];
+  return (
+    <div className={`rounded-xl border ${stColor.border} ${stColor.bg} p-3 transition-all`}>
+      <button onClick={()=>setExpand(!expand)} className="w-full flex items-center justify-between gap-3 text-left">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-lg shrink-0">{check.icon}</span>
+          <span className="text-sm font-bold text-slate-100 truncate">{check.label}</span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${stColor.text} border ${stColor.border}`}>
+            {stColor.icon} {stColor.label}
+          </span>
+        </div>
+        <span className="text-slate-500 text-xs shrink-0">{expand ? '▲' : '▼'}</span>
+      </button>
+      <div className="text-[11px] text-slate-500 mt-1 ml-7">{check.desc}</div>
+      {expand && check.status !== 'pass' && (
+        <div className="mt-2 ml-7 p-2 rounded-lg bg-slate-900/60 border border-slate-700/50 text-xs text-slate-300 leading-relaxed">
+          <span className="text-yellow-400 font-bold">建議：</span>{check.suggest}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const AUDIT_SAMPLES = [
+  { id:'weak',   label:'😵 弱例', hint:'12 字 + AI slop 詞「stunning」', text:'Make me a beautiful image of a city at night, stunning lighting' },
+  { id:'mid',    label:'😐 中例', hint:'有引號文字但缺尺寸與版面細節',     text:'Create a poster for a coffee shop in Taipei. Warm tone, modern. The shop is called "Bean Lab".' },
+  { id:'strong', label:'💪 強例', hint:'70 字 · 引號文字 · 尺寸 · 否定詞', text:'Design a polished mobile finance app UI mockup for a fictional neobank called AURAE, shown on a 1290x2796 smartphone screen, front-facing, with a soft off-white background. Calm palette of deep navy, mint green, warm gray. Top header with in-image text "AURAE", "Good morning, Lina", and "Total balance $12,480.36". Add three summary chips labeled "Income +$4,200", "Spent -$1,830", "Saved 32%". Crisp typography, production-quality mockup. No fake logos, no generic card walls.' },
+];
+
+function AuditTab({ onApply, pendingText, clearPendingText }) {
+  const { key: apiKey } = useContext(ApiCtx);
+  const [text, setText] = useState(AUDIT_SAMPLES[0].text);
+  const [audit, setAudit] = useState(() => runAudit(AUDIT_SAMPLES[0].text));
+  const [enhanced, setEnhanced] = useState('');
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhanceErr, setEnhanceErr] = useState('');
+  const [showHelp, setShowHelp] = useState(true);
+
+  useEffect(() => {
+    if (!pendingText) return;
+    const a = runAudit(pendingText);
+    setText(pendingText);
+    setAudit(a);
+    setEnhanced('');
+    setEnhanceErr('');
+    clearPendingText?.();
+  }, [pendingText]);
+
+  const loadSample = s => {
+    setText(s.text);
+    setAudit(runAudit(s.text));
+    setEnhanced('');
+    setEnhanceErr('');
+  };
+
+  const runCheck = () => {
+    const a = runAudit(text);
+    setAudit(a);
+    setEnhanced('');
+    setEnhanceErr('');
+  };
+
+  const runEnhance = async () => {
+    if (!apiKey) { setEnhanceErr('需先在右上角「設定 API Key」按鈕填入 OpenAI key 才能使用 AI 增強功能'); return; }
+    if (!text.trim()) { setEnhanceErr('請先輸入要增強的 prompt'); return; }
+    setEnhancing(true);
+    setEnhanceErr('');
+    try {
+      const out = await enhancePromptWithOpenAI(text, apiKey);
+      setEnhanced(out);
+      setAudit(runAudit(out));
+    } catch (e) {
+      setEnhanceErr(String(e.message || e));
+    } finally {
+      setEnhancing(false);
+    }
+  };
+
+  const overallColor = !audit ? 'text-slate-400' : (audit.score >= 85 ? 'text-emerald-400' : audit.score >= 70 ? 'text-yellow-400' : audit.score >= 55 ? 'text-orange-400' : 'text-rose-400');
+
+  return (
+    <main className="max-w-5xl mx-auto px-4 py-6 space-y-4">
+      <div>
+        <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+          🩺 體檢 & 增強
+          <span className="text-xs font-normal text-slate-500">v2.0 · prompt 健檢工具</span>
+        </h2>
+      </div>
+
+      {showHelp && (
+        <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/5 p-4">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="text-sm font-bold text-yellow-300">💡 這個 tab 是做什麼的？</div>
+            <button onClick={()=>setShowHelp(false)} className="text-xs text-slate-500 hover:text-slate-300 shrink-0">
+              收起說明 ▲
+            </button>
+          </div>
+          <div className="text-xs text-slate-300 leading-relaxed space-y-2">
+            <p>
+              <span className="text-yellow-400 font-bold">用途：</span>
+              你在 Claude Design 寫了 prompt，但不確定「夠不夠完整」？貼來這裡馬上知道：
+              <span className="text-slate-100 font-bold">哪裡寫得好（✅）、哪裡缺東西（⚠️）、哪裡有 AI 廢話空話（❌）</span>。
+            </p>
+            <p>
+              <span className="text-yellow-400 font-bold">3 步驟：</span>
+              <span className="text-slate-100">①</span> 點下方任一範例（或自己貼 prompt）→
+              <span className="text-slate-100"> ②</span> 看分數 + 8 維度結果（會自動跑）→
+              <span className="text-slate-100"> ③</span> 點「✨ AI 增強」讓 GPT 改寫成更強版本，再「→ 套用到 Claude Design」用它生圖。
+            </p>
+            <p className="text-slate-500">
+              📊 8 維度：任務意圖 / 受眾 / 核心訊息 / 構圖版面色彩 / in-image 文字 / size + quality / 反 AI Slop / source attribution。
+            </p>
+          </div>
+        </div>
+      )}
+      {!showHelp && (
+        <button onClick={()=>setShowHelp(true)} className="text-xs text-yellow-400 hover:text-yellow-300 font-semibold">
+          💡 顯示說明 ▼
+        </button>
+      )}
+
+      <div>
+        <div className="text-xs text-slate-500 mb-1.5">先點一個範例試試（自動跑體檢）：</div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {AUDIT_SAMPLES.map(s => {
+            const active = text === s.text;
+            return (
+              <button key={s.id} onClick={()=>loadSample(s)}
+                className={`text-left rounded-lg p-2.5 transition-all border ${active?'bg-yellow-500/10 border-yellow-500':'bg-slate-900 border-slate-700 hover:border-slate-500'}`}>
+                <div className={`text-sm font-bold ${active?'text-yellow-300':'text-slate-200'}`}>{s.label}</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">{s.hint}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs text-slate-500 mb-1.5">
+          或自己貼 / 輸入 prompt（修改後會自動清掉舊體檢結果，記得按「重新體檢」）：
+        </div>
+        <textarea
+          value={text}
+          onChange={e=>{ setText(e.target.value); if (audit) setAudit(null); }}
+          placeholder='例：Design a patient education poster for O2Win Dental about implant aftercare. In-image text "植牙術後照護", "冰敷 24 小時", "按時回診". Size: portrait 1024x1536. Clean dental clinic palette, white, teal, warm daylight. No fake logos, no generic card walls.'
+          className="w-full min-h-[140px] px-3 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-sm text-slate-200 placeholder-slate-500 focus:border-yellow-500 focus:outline-none leading-relaxed"
+        />
+        {text && (
+          <div className="mt-1 text-right">
+            <button onClick={()=>{ setText(''); setAudit(null); setEnhanced(''); setEnhanceErr(''); }}
+              className="text-[11px] text-slate-500 hover:text-rose-400">
+              ✕ 清空 textarea
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2 items-center">
+        <button onClick={runCheck} disabled={!text.trim()}
+          className="px-4 py-2 rounded-lg text-sm font-bold bg-yellow-500 hover:bg-yellow-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-900 transition-all">
+          {audit ? '🔄 重新體檢' : '🩺 開始體檢'}
+        </button>
+        <button onClick={runEnhance} disabled={!text.trim() || enhancing}
+          title={apiKey ? '用 GPT-4o-mini 把 prompt 改寫成更完整版本' : '需先在右上角設定 API Key'}
+          className="px-4 py-2 rounded-lg text-sm font-bold bg-purple-500 hover:bg-purple-400 disabled:bg-slate-800 disabled:text-slate-600 text-white transition-all">
+          {enhancing ? '✨ AI 增強中...' : (apiKey ? '✨ AI 增強（GPT 改寫）' : '🔒 AI 增強（需先設 API Key）')}
+        </button>
+        {audit && enhanced && (
+          <button onClick={()=>onApply(enhanced, 'enhanced')}
+            title="切到 Claude Design，把上方紫色框的 AI 增強版 prompt 填入圖像描述欄"
+            className="ml-auto px-4 py-2 rounded-lg text-sm font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all">
+            → 套用 AI 增強版到 Claude Design
+          </button>
+        )}
+        {audit && !enhanced && (
+          <button onClick={()=>onApply(text, 'original')}
+            title="切到 Claude Design，把目前 textarea 的原 prompt 填入圖像描述欄"
+            className="ml-auto px-4 py-2 rounded-lg text-sm font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all">
+            → 套用此 prompt 到 Claude Design
+          </button>
+        )}
+      </div>
+
+      {enhanceErr && (
+        <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300">
+          ⚠️ {enhanceErr}
+        </div>
+      )}
+
+      {audit && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-4">
+                <div className="text-center">
+                  <div className={`text-4xl font-black ${overallColor}`}>{audit.score}</div>
+                  <div className="text-[10px] text-slate-500">Score</div>
+                </div>
+                <div className="text-center">
+                  <div className={`text-4xl font-black ${overallColor}`}>{audit.grade}</div>
+                  <div className="text-[10px] text-slate-500">Grade</div>
+                </div>
+              </div>
+              <div className="flex gap-3 text-xs">
+                <div className="flex items-center gap-1"><span className="text-emerald-400">✅</span><span className="text-slate-300 font-bold">{audit.passCount}</span><span className="text-slate-500">通過</span></div>
+                <div className="flex items-center gap-1"><span className="text-amber-400">⚠️</span><span className="text-slate-300 font-bold">{audit.warnCount}</span><span className="text-slate-500">補強</span></div>
+                <div className="flex items-center gap-1"><span className="text-rose-400">❌</span><span className="text-slate-300 font-bold">{audit.failCount}</span><span className="text-slate-500">缺失</span></div>
+                <div className="flex items-center gap-1 border-l border-slate-700 pl-3 ml-1"><span className="text-slate-500">字數</span><span className="text-slate-300 font-bold">{audit.wordCount}</span></div>
+              </div>
+            </div>
+            <div className="mt-3 text-[11px] text-slate-500 leading-relaxed">
+              💡 體檢只指出薄弱處，不阻擋你直接複製 prompt 使用。AI 增強會用 GPT-4o-mini 改寫成更完整版本。
+            </div>
+          </div>
+
+          {(() => {
+            const grade = audit.grade;
+            if (grade === 'A') {
+              return <NextStepCard tone="emerald" done="✅ Grade A：這份 prompt 已可直接使用" next="複製到 GPT Image 2 / Midjourney 生圖，或點右側「→ 套用到 Claude Design」直接接到下一步" tip="若想再優化細節，可點「✨ AI 增強」讓 GPT 微調。"/>;
+            }
+            if (grade === 'B') {
+              return (
+                <NextStepCard tone="amber"
+                  done="🟡 Grade B：可用，但建議再補強"
+                  next={<><div>先處理上方 <span className="text-amber-300 font-bold">⚠️ 補強</span> 標記（{audit.warnCount} 項）：</div><ol className="list-decimal list-inside mt-1 text-slate-300 space-y-0.5"><li>點黃色維度卡看具體建議</li><li>修完 textarea 後按 <span className="text-yellow-400">🔄 重新體檢</span></li><li>沒空修也可直接套用，但圖片品質可能略遜 A 級</li></ol></>}
+                  tip="或者按「✨ AI 增強」讓 GPT 一次補完所有薄弱維度。"/>
+              );
+            }
+            return (
+              <NextStepCard tone="rose"
+                done={`🔴 Grade ${grade}：缺失太多，先別套用`}
+                next={<><div>下方有 <span className="text-rose-300 font-bold">{audit.failCount} 項缺失</span> + <span className="text-amber-300 font-bold">{audit.warnCount} 項補強</span>，建議：</div><ol className="list-decimal list-inside mt-1 text-slate-300 space-y-0.5"><li>點 ❌ 紅色維度卡看「缺什麼」</li><li>把建議補進 textarea</li><li>按 <span className="text-yellow-400">🔄 重新體檢</span> 看分數有沒有提升</li><li>分數到 B 以上再套用到 Claude Design</li></ol></>}
+                tip="嫌手動修太慢？直接按「✨ AI 增強」讓 GPT 幫你改寫一遍（需 API Key）。"/>
+            );
+          })()}
+
+          <div className="grid gap-2 md:grid-cols-2">
+            {audit.checks.map(c => <AuditCheckRow key={c.key} check={c}/>)}
+          </div>
+        </div>
+      )}
+
+      {enhanced && (
+        <div className="rounded-xl border border-purple-500/40 bg-purple-500/5 p-4">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="text-sm font-bold text-purple-300">✨ AI 增強版</div>
+            <CopyBtn text={enhanced} sm/>
+          </div>
+          <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap bg-slate-900/60 border border-slate-700/50 rounded-lg p-3">
+            {enhanced}
+          </div>
+          <div className="mt-2 text-[11px] text-slate-500">
+            上方體檢分數已根據此增強版重新計算。可繼續微調 prompt 後再體檢。
+          </div>
         </div>
       )}
     </main>
@@ -3933,9 +4351,9 @@ function LabTab({ goTab }) {
     },
     anti: {
       title:'反 AI Slop 診斷已完成',
-      body:'本輪不導向未存在的體檢模組。請先複製診斷結果，或回智慧入口重新生成更乾淨的 prompt。',
+      body:'下一步建議進體檢 & 增強，把原 prompt 或診斷輸出跑 8 維度體檢，再決定手動修或 AI 增強。',
       primary:'複製診斷結果',
-      steps:['先修掉診斷出的通用美學問題', '回智慧入口重新分類需求', '再進對應工具生成正式 prompt'],
+      steps:['先修掉診斷出的通用美學問題', '送去體檢 & 增強看 8 維度缺口', '再進對應工具生成正式 prompt'],
     },
   };
 
@@ -3984,7 +4402,16 @@ function LabTab({ goTab }) {
           steps={nextByMode[mode].steps}
           actions={mode === 'anti'
             ? [
-                { label:nextByMode[mode].primary, kind:'primary', onClick:()=>navigator.clipboard?.writeText(out).catch(()=>{}) },
+                { label:'前往 體檢 & 增強', kind:'primary', onClick:()=>goTab?.('audit', {
+                  targetTab:'audit',
+                  sourceTab:'lab',
+                  sourceLabel:'彩蛋 Lab',
+                  title:'來自 Lab 反 AI Slop 診斷',
+                  body:'已把反 AI Slop 診斷輸出送到體檢頁，可用 8 維度再檢查 prompt。',
+                  prompt: out,
+                  tone:'rose',
+                }) },
+                { label:nextByMode[mode].primary, kind:'secondary', onClick:()=>navigator.clipboard?.writeText(out).catch(()=>{}) },
                 { label:'回 Smart 重新分類', kind:'secondary', onClick:()=>goTab?.('smart') },
               ]
             : [
@@ -4009,20 +4436,25 @@ function LabTab({ goTab }) {
    ROOT
 ───────────────────────────────────── */
 function App() {
-  const [tab,    setTab]    = useState('design');
+  const [tab,    setTab]    = useState('smart');
   const [apiKey, setApiKey] = useState('');   // session-only, never persisted
   const [pendingDesignPrompt, setPendingDesignPrompt] = useState(null);
+  const [pendingAuditText, setPendingAuditText] = useState(null);
   const [landingNote, setLandingNote] = useState(null);
 
   const tabs=[
+    {id:'smart', label:'🖼️ 智慧製圖'},
     {id:'design',label:'🎨 Claude Design'},
     {id:'nlm',   label:'📑 NotebookLM'},
-    {id:'smart', label:'🖼️ 智慧製圖'},
     {id:'promptlab', label:'📚 提示詞庫'},
+    {id:'audit', label:'🩺 體檢 & 增強'},
     {id:'lab',   label:'彩蛋 🧪'},
   ];
 
   const goTab = useCallback((nextTab, note=null) => {
+    if ((note?.targetTab || nextTab) === 'audit' && note?.prompt) {
+      setPendingAuditText(note.prompt);
+    }
     setTab(nextTab);
     if (note) {
       setLandingNote({
@@ -4035,6 +4467,19 @@ function App() {
       setLandingNote(prev => prev && prev.targetTab === nextTab ? prev : null);
     }
   }, []);
+
+  const sendPromptToAudit = useCallback((prompt, sourceLabel='其他頁籤') => {
+    if (!prompt?.trim()) return;
+    goTab('audit', {
+      targetTab:'audit',
+      sourceTab:sourceLabel,
+      sourceLabel,
+      title:`來自${sourceLabel}的 prompt`,
+      body:'已帶入體檢 & 增強頁，請看 8 維度分數與可補強處。',
+      prompt,
+      tone:'amber',
+    });
+  }, [goTab]);
 
   useEffect(() => {
     if (!landingNote?.ttlMs) return;
@@ -4059,6 +4504,24 @@ function App() {
       title: '已從 Prompt Lab 套用英文 prompt',
       body: `來源：${promptItem.titleZh || promptItem.title}。目標：Claude Design Step 1。已預填英文原文 prompt，可先檢查內容再繼續設計流程。`,
       tone: 'cyan',
+    });
+  };
+
+  const applyAuditToDesign = (text, kind) => {
+    setPendingDesignPrompt({
+      id: `audit-${kind || 'original'}`,
+      title: kind === 'enhanced' ? 'AI 增強版 prompt' : 'Audit 原始 prompt',
+      prompt: text,
+      _source: 'audit',
+      _kind: kind,
+    });
+    goTab('design', {
+      targetTab:'design',
+      sourceTab:'audit',
+      sourceLabel:'體檢 & 增強',
+      title: kind === 'enhanced' ? '已套用 AI 增強版 prompt' : '已套用體檢 prompt',
+      body:'目標：Claude Design Step 1。已預填從 Audit 帶回的 prompt，可先檢查內容再繼續設計流程。',
+      tone: kind === 'enhanced' ? 'emerald' : 'amber',
     });
   };
 
@@ -4092,7 +4555,7 @@ function App() {
           </div>
         </header>
 
-        {tab==='smart'  && <SmartTab goTab={goTab}/>}
+        {tab==='smart'  && <SmartTab goTab={goTab} onSendAudit={sendPromptToAudit}/>}
         {tab==='nlm'    && <NLMTab goTab={goTab}/>}
         {tab==='design' && <DesignTab
           pendingDesignPrompt={pendingDesignPrompt}
@@ -4102,6 +4565,7 @@ function App() {
           goTab={goTab}
         />}
         {tab==='promptlab' && <PromptLabTab onApplyToDesign={applyPromptToDesign} goTab={goTab}/>}
+        {tab==='audit'  && <AuditTab onApply={applyAuditToDesign} pendingText={pendingAuditText} clearPendingText={()=>setPendingAuditText(null)}/>}
         {tab==='lab'    && <LabTab goTab={goTab}/>}
       </div>
     </ApiCtx.Provider>
