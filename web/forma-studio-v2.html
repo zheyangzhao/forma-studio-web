@@ -3325,11 +3325,34 @@ n: ${thinking ? 4 : 2}`
 /* ─────────────────────────────────────
    PROMPT LAB HELPERS + COMPONENTS
 ───────────────────────────────────── */
+async function loadPromptTitleTranslations() {
+  try {
+    const res = await fetch('./prompt-library/translations-zh.json', { cache:'no-store' });
+    if (!res.ok) throw new Error(`translations-zh.json 載入失敗：HTTP ${res.status}`);
+    const data = await res.json();
+    if (data?.schema_version !== 2) {
+      console.warn('[Forma Studio] translations-zh.json schema_version mismatch', data?.schema_version);
+    }
+    if (!data?.titles || typeof data.titles !== 'object' || Array.isArray(data.titles)) {
+      console.warn('[Forma Studio] translations-zh.json 缺少 titles object');
+      return {};
+    }
+    return Object.fromEntries(Object.entries(data.titles).filter(([, value]) => typeof value === 'string' && value.trim()));
+  } catch (error) {
+    console.warn('[Forma Studio] translations-zh.json unavailable; falling back to English titles', error);
+    return {};
+  }
+}
+
 async function loadPromptLibrary() {
-  const indexRes = await fetch('./prompt-library/gallery-index.json', { cache:'no-store' });
-  if (!indexRes.ok) throw new Error(`gallery-index.json 載入失敗：HTTP ${indexRes.status}`);
-  const index = await indexRes.json();
-  if (!Array.isArray(index.categories)) throw new Error('gallery-index.json 缺少 categories array');
+  const indexPromise = (async () => {
+    const indexRes = await fetch('./prompt-library/gallery-index.json', { cache:'no-store' });
+    if (!indexRes.ok) throw new Error(`gallery-index.json 載入失敗：HTTP ${indexRes.status}`);
+    const index = await indexRes.json();
+    if (!Array.isArray(index.categories)) throw new Error('gallery-index.json 缺少 categories array');
+    return index;
+  })();
+  const [index, titleTranslations] = await Promise.all([indexPromise, loadPromptTitleTranslations()]);
 
   const categoryData = await Promise.all(index.categories.map(async meta => {
     const res = await fetch(`./prompt-library/${meta.file}`, { cache:'no-store' });
@@ -3345,21 +3368,27 @@ async function loadPromptLibrary() {
       const useCases = data.use_cases || meta.use_cases || [];
       const promptText = String(p.prompt || '');
       const title = p.title || `Prompt ${p.no || idx + 1}`;
+      const id = p.id || `${meta.slug}-${p.no || idx + 1}`;
+      const categoryTitle = data.category || meta.category || meta.slug;
+      const categoryTitleZh = data.title_zh || meta.title_zh || data.category || meta.slug;
+      const titleZh = titleTranslations[id] || null;
       const searchParts = [
-        title, promptText, data.category, data.title_zh, meta.category, meta.title_zh,
+        title, titleZh, promptText, data.category, data.title_zh, meta.category, meta.title_zh, categoryTitle, categoryTitleZh,
         ...(industries || []), ...(useCases || []), p.credit, source.author
       ];
       return {
-        id: p.id || `${meta.slug}-${p.no || idx + 1}`,
+        id,
         no: p.no || idx + 1,
         title,
+        titleZh,
+        translationKey: id,
         prompt: promptText,
         size: p.size || '',
         pixel: p.pixel || '',
         credit: p.credit || '',
         categorySlug: data.slug || meta.slug,
-        categoryTitle: data.category || meta.category || meta.slug,
-        categoryTitleZh: data.title_zh || meta.title_zh || data.category || meta.slug,
+        categoryTitle,
+        categoryTitleZh,
         industries,
         useCases,
         sourceRepo: source.repo || categorySource.repo || index.source?.repo || 'source n/a',
@@ -3398,7 +3427,14 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] font-bold uppercase tracking-wide text-yellow-300">{item.categoryTitleZh}</div>
-          <h3 className="mt-1 text-sm font-black text-white leading-snug">{item.title}</h3>
+          <h3 className="mt-1 text-base font-black text-white leading-snug break-words">
+            {item.titleZh || item.title}
+          </h3>
+          {item.titleZh && (
+            <div className="mt-0.5 text-xs font-semibold text-slate-400 leading-snug break-words">
+              {item.title}
+            </div>
+          )}
         </div>
         <span className="shrink-0 rounded-lg bg-slate-900/80 border border-slate-700 px-2 py-1 text-[11px] font-bold text-slate-300">
           #{item.no}
