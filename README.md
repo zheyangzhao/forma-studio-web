@@ -1,44 +1,135 @@
-# Forma Studio Web
+# Forma Studio Web v2.0
 
-AI 設計提示詞工作坊（純 Web 版）。
+Forma Studio Web v2.0 是一個純前端的 AI 設計提示詞工作坊，用來把模糊需求轉成可交給 Claude Design、NotebookLM、GPT Image 2、Midjourney 或其他生成式工具的高品質 prompt。
 
-從 [forma-studio-v2.5](https://github.com/zheyangzhao/forma-studio-v2.5) 的 web v1.1 為基線重新出發，**桌面版本停用**，本 repo 專注網頁版開發與重做 v2.0。
+本 repo 目前專注 Web 版。v1.1 穩定版保留為凍結對照，v2.0 則在 `web/forma-studio-v2.html` 持續重做與增強。
 
-## 結構
+## v1.1 凍結契約
 
+`web/forma-studio.html` 是 v1.1 凍結版，後續 sprint 不得修改。
+
+凍結契約見 [`docs/CONTRACT-v1.1-frozen.md`](docs/CONTRACT-v1.1-frozen.md)。除非有明確資安漏洞或不可回避的瀏覽器棄用，任何 PR 都應讓 `web/forma-studio.html` 保持 0 行 diff。
+
+## v2.0 入口
+
+主要檔案：
+
+- `web/forma-studio-v2.html`：v2.0 實驗版主程式，目前 5501 行。
+- `web/forma-studio.html`：v1.1 凍結版，只做對照與回退。
+- `web/prompt-library/`：116 條 prompt 的來源 JSON 與中文翻譯資料。
+
+## v2.0 功能總覽
+
+v2.0 目前整理為 8 個頁籤級工作區。頂層 UI 是 7 個主 tab，其中 `Claude Design` 內含「品牌與評審」子工作區，文件上列為獨立頁籤級能力，方便使用者按任務尋路。
+
+### 1. 智慧製圖
+
+`智慧製圖` 是入口分流器。使用者可輸入自然語言需求，系統會判斷適合走圖像生成、資訊圖表、UI 原型、品牌資產或 NotebookLM 任務，並產出對應 prompt。完成後可送到 Claude Design 精修，也可直接送去體檢。
+
+### 2. Claude Design
+
+`Claude Design` 是核心設計 prompt 工作台，保留 v1.1 的 glow 流程 DNA。它支援需求描述、受眾基調、製圖方式、風格與品牌參考，最後輸出可貼到 Claude Code、Cursor、Hermes 或圖像工具的設計 prompt。
+
+### 3. NotebookLM
+
+`NotebookLM` 產出任務指令與自定義指示，支援內容整理、簡報腳本、衛教資料、社群素材與來源素材工作流。Sprint 1.8 後加入 Step 5 貼上順序卡，提醒先設定自定義指示，再貼任務指令，最後上傳來源素材。
+
+### 4. 提示詞庫 Prompt Lab
+
+`Prompt Lab` 收錄 116 條 prompt，來源包含 `wuyoscar/gpt_image_2_skill` 66 條與 `EvoLinkAI/awesome-gpt-image-2-prompts` 50 條。卡片支援中文標題、中文摘要、中文全文翻譯、英文原文複製、來源/製圖方式/分類篩選、中文搜尋、收藏，以及套用到 Claude Design 或送去體檢。
+
+### 5. 體檢 & 增強
+
+`體檢 & 增強` 提供 8 維度本地評分，包含任務意圖、受眾情境、核心訊息、構圖/版面/色彩、in-image 文字、size/quality/negative、反 AI Slop 與 source attribution。它會給出 0-100 分、A-F 等級、缺失與補強項，也可用 GPT-4o-mini 產出 AI 增強版。
+
+### 6. 風格實驗室 Style Studio
+
+`Style Studio` 用 5 類別 chips 組英文 prompt：人像/商業攝影、海報/插畫、UI/產品介面、角色/吉祥物、醫學圖解/衛教。使用者選尺寸、品質、主題與風格 chips 後，可直接套用到 Claude Design 或送去體檢。
+
+### 7. 品牌與評審
+
+`品牌與評審` 位於 Claude Design 子頁籤。它包含品牌資產協議與 5 維度設計評審，可引導使用者先確認品牌存在性、Logo、產品圖、色票、字體與品牌規範，再生成可交給 Claude Code 執行的品牌還原 prompt。
+
+### 8. 彩蛋 Lab
+
+`彩蛋 Lab` 提供快速實驗模式，包括病毒傳播版、TED 風格版、四受眾批次改寫與反 AI Slop 診斷。Sprint 1.8 後每個模式都有下一步引導，可送 NotebookLM 或送體檢。
+
+## 災後重做緣起
+
+2026-05-01 發生誤刪事件，原 v2.0 主程式遺失。本 repo 從 v1.1 baseline 重新建立 Web v2.0，並把重做過程拆成 sprint 留痕。
+
+重做節奏：
+
+- Sprint 0：建立 `web/forma-studio-v2.html` baseline，保留 v1.1 凍結契約。
+- Sprint 1：新增 Prompt Lab，整合 116 條 prompt 與跨 tab 套用。
+- Sprint 1.5：加入 116 條中文標題、中英雙語卡片與中文搜尋。
+- Sprint 1.6 + 1.7：補齊 116 條中文摘要與中文全文翻譯。
+- Sprint 1.8：補上 12 項 UX 引導、完成卡與跨 tab 下一步說明。
+- Sprint 2：新增 Audit & Enhance，本地 8 維度評分與 AI 增強。
+- Sprint 3：新增 Style Studio，5 類別 chips 組英文 prompt。
+- Sprint 4：新增 v2-only localStorage 持久化與設定面板。
+- Sprint 5：文件收尾，同步 README、CHANGELOG 與 sprint plan。
+
+## Quick Start
+
+從 repo 根目錄啟動靜態伺服器：
+
+```bash
+cd ~/Projects/forma-studio-web
+python3 -m http.server 8765
 ```
-web/
-├── forma-studio.html          # v1.1 凍結版（4 區塊 glow，3 tab，3422 行）
-├── prompt-library/            # 116 條 prompt（18 個 JSON）
-├── manifest.json
-├── service-worker.js
-└── README.md
 
-docs/
-└── CONTRACT-v1.1-frozen.md    # v1.1 凍結契約
+開啟 v2.0：
 
-LICENSE
+```text
+http://localhost:8765/web/forma-studio-v2.html
 ```
 
-## v1.1 凍結
+開啟 v1.1 凍結版：
 
-`web/forma-studio.html` 屬 v1.1 凍結版，**任何 PR 不得修改該檔**。詳見 `docs/CONTRACT-v1.1-frozen.md`。
+```text
+http://localhost:8765/web/forma-studio.html
+```
 
-## v2.0 重做計劃
+## 專案結構
 
-v2.0 主程式（`web/forma-studio-v2.html`）將從 v1.1 為基底，按 17 個 sprint 高保真重做：
+```text
+.
+├── README.md
+├── CHANGELOG.md
+├── LICENSE
+├── docs/
+│   ├── CONTRACT-v1.1-frozen.md
+│   ├── PLAN-sprint-0.md
+│   ├── PLAN-sprint-1.md
+│   ├── PLAN-sprint-1.5.md
+│   ├── PLAN-sprint-1.6-1.7.md
+│   ├── PLAN-sprint-1.8.md
+│   ├── PLAN-sprint-2.md
+│   ├── PLAN-sprint-3.md
+│   ├── PLAN-sprint-4.md
+│   └── PLAN-sprint-5.md
+├── tests/
+│   └── sprint*-verify.spec.js
+└── web/
+    ├── forma-studio.html
+    ├── forma-studio-v2.html
+    ├── manifest.json
+    ├── service-worker.js
+    ├── README.md
+    └── prompt-library/
+        ├── gallery-index.json
+        ├── translations-zh.json
+        └── *.json
+```
 
-- Phase A：Sprint 0 → Sprint 1.8（v2 基線 + Prompt Lab + 116 翻譯 + UX 引導）
-- Phase B：Sprint 2 → Sprint 5（Audit + Style + localStorage + README）
-- Phase C：B-lite + Truly-Neutral + PPT Flow Lite
-- 之後（可選）：C-1 Smart glow 化 + C-2 快速/完整分流
+## 開發邊界
 
-進度詳見後續 commit 與 `docs/CHANGELOG.md`（待 Sprint 0 建立）。
-
-## 災後重建緣起
-
-2026-05-01 因誤刪事件，原 v2.0 主程式 5915 行遺失。本 repo 為從 v1.1 基線重做的成果。完整救援與規劃資料保存於本機 `~/forma-rebuild/`（不上版控）。
+- v1.1 凍結版：不要修改 `web/forma-studio.html`。
+- v2.0 主程式：Sprint 5 不修改 `web/forma-studio-v2.html`。
+- 文件 sprint：Sprint 5 不修改 `tests/`，不新增 spec。
+- 本機救援資料：`~/forma-rebuild/` 僅供參考，不進版控。
 
 ## License
 
-MIT — 見 LICENSE。
+MIT，見 [`LICENSE`](LICENSE)。
