@@ -66,6 +66,94 @@ const { useState, useEffect, useCallback, useContext, createContext, useRef } = 
 /* ── 全域 API Key Context（session 期間共用，不存 localStorage）── */
 const ApiCtx = createContext({ key:'', setKey:()=>{} });
 
+/* ─────────────────────────────────────
+   v2.0 Sprint 4: localStorage 持久化 helper
+   - 全部 key 用 forma-v2.* 前綴避開 v1.1
+   - storage 不可用時降級 session-only，不阻擋頁面
+   - object 類資料含 schema_version，未來 migration 用
+───────────────────────────────────── */
+const LS_PREFIX = 'forma-v2.';
+const LS_AVAILABLE = (() => {
+  try {
+    const t = '__forma_v2_test__';
+    localStorage.setItem(t, '1');
+    localStorage.removeItem(t);
+    return true;
+  } catch (e) {
+    console.warn('[Forma Studio] localStorage 不可用，降級為 session-only', e);
+    return false;
+  }
+})();
+
+const LS = {
+  available: LS_AVAILABLE,
+  getStr(name, fallback = null) {
+    if (!LS_AVAILABLE) return fallback;
+    try { return localStorage.getItem(LS_PREFIX + name) ?? fallback; }
+    catch (e) { return fallback; }
+  },
+  setStr(name, value) {
+    if (!LS_AVAILABLE) return false;
+    try { localStorage.setItem(LS_PREFIX + name, String(value)); return true; }
+    catch (e) { console.warn('[LS] setStr 失敗', name, e); return false; }
+  },
+  getObj(name, expectedVersion = 1) {
+    if (!LS_AVAILABLE) return null;
+    try {
+      const raw = localStorage.getItem(LS_PREFIX + name);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (obj && obj.schema_version === expectedVersion) return obj;
+      console.warn('[LS] schema_version 不符，忽略', name, obj?.schema_version);
+      return null;
+    } catch (e) {
+      console.warn('[LS] getObj 解析失敗，忽略', name, e);
+      return null;
+    }
+  },
+  setObj(name, data, version = 1) {
+    if (!LS_AVAILABLE) return false;
+    try {
+      const payload = { schema_version: version, updated_at: new Date().toISOString(), data };
+      localStorage.setItem(LS_PREFIX + name, JSON.stringify(payload));
+      return true;
+    } catch (e) {
+      console.warn('[LS] setObj 失敗', name, e);
+      return false;
+    }
+  },
+  remove(name) {
+    if (!LS_AVAILABLE) return;
+    try { localStorage.removeItem(LS_PREFIX + name); } catch (e) {}
+  },
+  clearAll() {
+    if (!LS_AVAILABLE) return 0;
+    try {
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(LS_PREFIX)) toRemove.push(k);
+      }
+      toRemove.forEach(k => localStorage.removeItem(k));
+      return toRemove.length;
+    } catch (e) { return 0; }
+  },
+  list() {
+    if (!LS_AVAILABLE) return [];
+    try {
+      const out = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(LS_PREFIX)) out.push(k.slice(LS_PREFIX.length));
+      }
+      return out.sort();
+    } catch (e) { return []; }
+  },
+};
+
+const VALID_TAB_IDS = ['smart', 'design', 'nlm', 'promptlab', 'audit', 'style', 'lab'];
+const validateTabId = id => id === 'plab' ? 'promptlab' : (VALID_TAB_IDS.includes(id) ? id : 'smart');
+
 /* ── v2.5: Prompt Gallery loader（DOM-based，保持單檔特性）── */
 /* 讀 <script id="forma-gallery"> 區塊；空或解析失敗 → 回退 v1.0 行為 */
 const FORMA_GALLERY = (() => {
@@ -1146,27 +1234,64 @@ function ApiKeyBar() {
 /* ─────────────────────────────────────
    API Key 精簡版（嵌入 Header 右側）
 ───────────────────────────────────── */
-function ApiKeyInline() {
+function ApiKeyInline({ openSettings }) {
   const { key, setKey } = useContext(ApiCtx);
   const [open,  setOpen]  = useState(false);
   const [show,  setShow]  = useState(false);
   const [draft, setDraft] = useState('');
+  const [remember, setRemember] = useState(() => LS.getStr('api-key-remember', 'false') === 'true');
+  const [persistedKeyExists, setPersistedKeyExists] = useState(() => !!LS.getStr('api-key'));
 
-  const save = () => { setKey(draft.trim()); setOpen(false); };
-  const clear= () => { setKey(''); setDraft(''); setOpen(false); };
+  useEffect(() => {
+    if (LS.getStr('api-key-remember', 'false') === 'true') {
+      const saved = LS.getStr('api-key', '');
+      if (saved && !key) setKey(saved);
+    }
+    /* eslint-disable-next-line */
+  }, []);
+
+  const save = () => {
+    const k = draft.trim();
+    setKey(k);
+    if (remember && k) {
+      LS.setStr('api-key', k);
+      LS.setStr('api-key-remember', 'true');
+      setPersistedKeyExists(true);
+    } else {
+      LS.remove('api-key');
+      LS.setStr('api-key-remember', 'false');
+      setPersistedKeyExists(false);
+    }
+    setOpen(false);
+  };
+  const clearSession = () => { setKey(''); setDraft(''); setOpen(false); };
+  const forgetThisDevice = () => {
+    setKey('');
+    setDraft('');
+    LS.remove('api-key');
+    LS.setStr('api-key-remember', 'false');
+    setRemember(false);
+    setPersistedKeyExists(false);
+  };
 
   return (
     <div className="relative">
       <button onClick={()=>{ setDraft(key); setOpen(o=>!o); }}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${key?'border-emerald-600/50 bg-emerald-900/20 text-emerald-400':'border-slate-700 bg-slate-800/50 text-slate-500 hover:text-slate-300 hover:border-slate-500'}`}>
         <span>{key?'🔑':'🔒'}</span>
-        <span className="hidden sm:inline">{key?'API Key 已設定':'設定 API Key'}</span>
-        {key && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>}
+        <span className="hidden sm:inline">{key?(persistedKeyExists?'API Key 已記住':'API Key 已設定'):'設定 API Key'}</span>
+        {key && <span className={`w-1.5 h-1.5 rounded-full ${persistedKeyExists?'bg-amber-400':'bg-emerald-500'}`}/>}
       </button>
       {open && (
-        <div className="absolute top-full right-0 mt-2 z-50 w-80 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-4 fade-in">
+        <div className="absolute top-full right-0 mt-2 z-50 w-96 max-w-[calc(100vw-2rem)] bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-4 fade-in max-h-[80vh] overflow-y-auto">
           <div className="text-xs font-bold text-slate-300 mb-1">OpenAI API Key</div>
-          <div className="text-xs text-slate-500 mb-3">智慧分析（GPT-4o-mini）+ 圖像生成（GPT Image 2）· 僅存記憶體，關閉頁面即清除</div>
+          <div className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+            智慧分析（GPT-4o-mini）+ AI 增強（GPT-4o-mini）+ 圖像生成（GPT Image 2）需要 Key。
+            <br/>{LS.available
+              ? <>未勾選「記住此設備」時，<span className="text-slate-400">關閉頁面即清除</span>。</>
+              : <span className="text-amber-400">⚠️ 此瀏覽器無法寫入 localStorage，本頁仍可用，但關閉後不保留。</span>
+            }
+          </div>
           <div className="relative mb-3">
             <input type={show?'text':'password'} value={draft} onChange={e=>setDraft(e.target.value)}
               placeholder="sk-proj-..."
@@ -1175,11 +1300,45 @@ function ApiKeyInline() {
             <button onClick={()=>setShow(s=>!s)}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 text-xs">{show?'隱藏':'顯示'}</button>
           </div>
-          <div className="flex gap-2">
+          {LS.available && (
+            <div className="mb-3 p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}
+                  className="mt-0.5 accent-amber-500"/>
+                <div className="text-[11px] leading-relaxed">
+                  <div className="font-bold text-amber-300">記住此設備（重整不用重貼）</div>
+                  <div className="text-slate-400 mt-0.5">
+                    OpenAI key 是敏感憑證，<span className="text-amber-300">localStorage 不加密</span>。
+                    建議只在私人電腦勾選；共用 / 公用電腦請保持未勾選。
+                  </div>
+                </div>
+              </label>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
             <button onClick={save} className="flex-1 py-2 bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold text-xs rounded-lg">儲存</button>
-            <button onClick={clear} className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg">清除</button>
+            <button onClick={clearSession} title="只清此次 session 的 key，不影響 localStorage" className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg">清除 session</button>
             <button onClick={()=>setOpen(false)} className="px-3 py-2 bg-slate-700 text-slate-400 text-xs rounded-lg">✕</button>
           </div>
+          {persistedKeyExists && (
+            <div className="mt-3 pt-3 border-t border-slate-700">
+              <div className="text-[11px] text-amber-300 mb-2">
+                ⚠️ 此 key 已保存在本機瀏覽器。共用 / 公用電腦請按下方「忘記此 key」。
+              </div>
+              <button onClick={forgetThisDevice}
+                className="w-full py-1.5 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-bold rounded-lg">
+                🗑️ 忘記此 key（清 session + localStorage）
+              </button>
+            </div>
+          )}
+          {openSettings && (
+            <div className="mt-3 pt-3 border-t border-slate-700">
+              <button onClick={()=>{ setOpen(false); openSettings(); }}
+                className="w-full py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold rounded-lg">
+                ⚙️ v2 完整設定面板（本地資料 / 收藏 / 偏好 / 歷史）
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -3671,7 +3830,7 @@ async function loadPromptLibrary() {
   return { index, categories:index.categories, prompts, warnings };
 }
 
-function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesign, onSendToAudit }) {
+function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesign, onSendToAudit, favorite, onToggleFavorite }) {
   const tags = [
     item.categoryTitleZh,
     ...(item.industries || []).slice(0, 3),
@@ -3694,9 +3853,16 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
             </div>
           )}
         </div>
-        <span className="shrink-0 rounded-lg bg-slate-900/80 border border-slate-700 px-2 py-1 text-[11px] font-bold text-slate-300">
-          #{item.no}
-        </span>
+        <div className="shrink-0 flex items-center gap-1.5">
+          <button onClick={() => onToggleFavorite?.(item.id)}
+            title={favorite ? '取消收藏' : '加入收藏'}
+            className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition-all ${favorite?'border-amber-400 bg-amber-400/15 text-amber-200':'border-slate-700 bg-slate-900/80 text-slate-400 hover:border-amber-400/60 hover:text-amber-200'}`}>
+            {favorite ? '⭐' : '☆'}
+          </button>
+          <span className="rounded-lg bg-slate-900/80 border border-slate-700 px-2 py-1 text-[11px] font-bold text-slate-300">
+            #{item.no}
+          </span>
+        </div>
       </div>
 
       <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-300">
@@ -3786,6 +3952,11 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
   const [activeCategory, setActiveCategory] = useState('all');
   const [expandedIds, setExpandedIds] = useState([]);
   const [copiedId, setCopiedId] = useState('');
+  const [favorites, setFavorites] = useState(() => {
+    const saved = LS.getObj('plab.favorites');
+    return new Set((saved?.data?.ids) || []);
+  });
+  const [favOnly, setFavOnly] = useState(false);
 
   const runLoad = useCallback(async () => {
     setLoading(true);
@@ -3810,6 +3981,7 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
 
   const totalCount = indexMeta?.total_count || prompts.length;
   const visiblePrompts = prompts.filter(item => {
+    if (favOnly && !favorites.has(item.id)) return false;
     const categoryOk = activeCategory === 'all' || item.categorySlug === activeCategory;
     const queryOk = !query.trim() || item.searchText.includes(query.trim().toLowerCase());
     return categoryOk && queryOk;
@@ -3817,6 +3989,14 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
   const sourceSummary = indexMeta?.sources || [];
 
   const toggleExpanded = id => setExpandedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const toggleFavorite = id => {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      LS.setObj('plab.favorites', { ids: [...next] });
+      return next;
+    });
+  };
   const copyPrompt = async item => {
     const textToCopy = item.englishPrompt || item.prompt || '';
     try {
@@ -3840,6 +4020,7 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
   const resetFilters = () => {
     setQuery('');
     setActiveCategory('all');
+    setFavOnly(false);
   };
 
   return (
@@ -3879,6 +4060,11 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
+          <button onClick={() => setFavOnly(f => !f)}
+            title={favOnly ? '顯示全部 prompt' : '只看您收藏的 prompt'}
+            className={`rounded-full border px-3 py-1.5 text-xs font-bold ${favOnly?'border-amber-400 bg-amber-400 text-slate-900':'border-amber-500/40 bg-slate-900/50 text-amber-300 hover:bg-amber-500/10'}`}>
+            {favOnly ? '⭐ 只看收藏' : '☆ 只看收藏'} <span className="opacity-70 ml-1">{favorites.size}</span>
+          </button>
           <button onClick={() => setActiveCategory('all')}
             className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategory==='all'?'border-yellow-400 bg-yellow-400/15 text-yellow-200':'border-slate-700 bg-slate-900/50 text-slate-300 hover:border-slate-500'}`}>
             全部 ({totalCount || prompts.length})
@@ -3893,7 +4079,9 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm">
           <div className="font-bold text-slate-200">目前命中 {visiblePrompts.length} / {totalCount || prompts.length}</div>
-          {warnings.length > 0 && <div className="text-xs text-amber-300">{warnings.join('；')}</div>}
+          <div className="text-xs text-amber-300">
+            {warnings.length > 0 ? warnings.join('；') : (!LS.available ? '此瀏覽器無法寫入 localStorage，收藏不會保留到下次開啟' : '')}
+          </div>
         </div>
       </section>
 
@@ -3942,6 +4130,8 @@ function PromptLabTab({ onApplyToDesign, goTab }) {
               onCopy={copyPrompt}
               copied={copiedId === item.id}
               onApplyToDesign={onApplyToDesign}
+              favorite={favorites.has(item.id)}
+              onToggleFavorite={toggleFavorite}
               onSendToAudit={item => goTab?.('audit', {
                 targetTab:'audit',
                 sourceTab:'promptlab',
@@ -4112,6 +4302,21 @@ function AuditTab({ onApply, pendingText, clearPendingText }) {
   const [enhancing, setEnhancing] = useState(false);
   const [enhanceErr, setEnhanceErr] = useState('');
   const [showHelp, setShowHelp] = useState(true);
+  const [history, setHistory] = useState(() => {
+    const saved = LS.getObj('audit.history');
+    return Array.isArray(saved?.data?.items) ? saved.data.items : [];
+  });
+  const [showHistory, setShowHistory] = useState(false);
+
+  const pushHistory = entry => {
+    setHistory(prev => {
+      if (prev[0] && prev[0].prompt === entry.prompt && prev[0].score === entry.score) return prev;
+      const next = [entry, ...prev].slice(0, 10);
+      LS.setObj('audit.history', { items: next });
+      return next;
+    });
+  };
+  const isDemoSample = t => AUDIT_SAMPLES.some(s => s.text === t);
 
   useEffect(() => {
     if (!pendingText) return;
@@ -4120,6 +4325,7 @@ function AuditTab({ onApply, pendingText, clearPendingText }) {
     setAudit(a);
     setEnhanced('');
     setEnhanceErr('');
+    pushHistory({ id: Date.now()+'', prompt: pendingText, score: a.score, grade: a.grade, word_count: a.wordCount, created_at: new Date().toISOString(), source: 'bridge' });
     clearPendingText?.();
   }, [pendingText]);
 
@@ -4135,6 +4341,9 @@ function AuditTab({ onApply, pendingText, clearPendingText }) {
     setAudit(a);
     setEnhanced('');
     setEnhanceErr('');
+    if (!isDemoSample(text) && text.trim()) {
+      pushHistory({ id: Date.now()+'', prompt: text, score: a.score, grade: a.grade, word_count: a.wordCount, created_at: new Date().toISOString(), source: 'manual' });
+    }
   };
 
   const runEnhance = async () => {
@@ -4151,6 +4360,18 @@ function AuditTab({ onApply, pendingText, clearPendingText }) {
     } finally {
       setEnhancing(false);
     }
+  };
+
+  const loadHistory = h => {
+    setText(h.prompt);
+    setAudit(runAudit(h.prompt));
+    setEnhanced('');
+    setEnhanceErr('');
+    setShowHistory(false);
+  };
+  const clearHistory = () => {
+    setHistory([]);
+    LS.remove('audit.history');
   };
 
   const overallColor = !audit ? 'text-slate-400' : (audit.score >= 85 ? 'text-emerald-400' : audit.score >= 70 ? 'text-yellow-400' : audit.score >= 55 ? 'text-orange-400' : 'text-rose-400');
@@ -4197,7 +4418,13 @@ function AuditTab({ onApply, pendingText, clearPendingText }) {
       )}
 
       <div>
-        <div className="text-xs text-slate-500 mb-1.5">先點一個範例試試（自動跑體檢）：</div>
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="text-xs text-slate-500">先點一個範例試試（自動跑體檢）：</div>
+          <button onClick={()=>setShowHistory(s=>!s)}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all border ${showHistory?'bg-cyan-500 text-slate-900 border-cyan-500':'bg-slate-900 text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/10'}`}>
+            🕒 體檢歷史 <span className="opacity-70 ml-1">{history.length}/10</span>
+          </button>
+        </div>
         <div className="grid gap-2 sm:grid-cols-3">
           {AUDIT_SAMPLES.map(s => {
             const active = text === s.text;
@@ -4211,6 +4438,45 @@ function AuditTab({ onApply, pendingText, clearPendingText }) {
           })}
         </div>
       </div>
+
+      {showHistory && (
+        <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/5 p-3 fade-in">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-bold text-cyan-300">🕒 最近 10 筆體檢</div>
+            {history.length > 0 && (
+              <button onClick={clearHistory} className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold">
+                ✕ 清除全部歷史
+              </button>
+            )}
+          </div>
+          <div className="text-[10px] text-slate-500 mb-2 leading-relaxed">
+            體檢歷史只存在此瀏覽器 localStorage，<span className="text-cyan-300 font-semibold">不會上傳</span>；prompt 可能含敏感內容，可隨時清除。Demo 範例不會寫入歷史。
+          </div>
+          {history.length === 0 ? (
+            <div className="text-xs text-slate-500 text-center py-3">
+              尚無體檢歷史。輸入 prompt 後按「🩺 開始體檢」即會自動記錄。
+            </div>
+          ) : (
+            <div className="space-y-1.5 max-h-72 overflow-y-auto">
+              {history.map(h => {
+                const gradeColor = h.grade==='A' ? 'text-emerald-400' : h.grade==='B' ? 'text-yellow-400' : h.grade==='C' ? 'text-orange-400' : 'text-rose-400';
+                const t = new Date(h.created_at);
+                const tStr = `${t.getMonth()+1}/${t.getDate()} ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+                return (
+                  <button key={h.id} onClick={()=>loadHistory(h)}
+                    className="w-full text-left rounded-lg p-2 bg-slate-900/60 hover:bg-slate-900 border border-slate-700 hover:border-cyan-500/40 transition-all">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className={`text-xs font-black ${gradeColor}`}>Grade {h.grade} · {h.score}</span>
+                      <span className="text-[10px] text-slate-500">{tStr}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300 line-clamp-2">{h.prompt}</div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <div className="text-xs text-slate-500 mb-1.5">
@@ -4595,12 +4861,33 @@ function StyleStudioTab({ onApply, onSendAudit }) {
     size_id:'portrait',
     quality_id:'high',
   };
-  const [catId, setCatId] = useState(DEFAULT_STYLE_STATE.cat_id);
-  const [subject, setSubject] = useState(DEFAULT_STYLE_STATE.subject);
-  const [picks, setPicks] = useState(DEFAULT_STYLE_STATE.picks);
-  const [sizeId, setSizeId] = useState(DEFAULT_STYLE_STATE.size_id);
-  const [qualityId, setQualityId] = useState(DEFAULT_STYLE_STATE.quality_id);
+  const loadInitial = () => {
+    const saved = LS.getObj('style.last-state');
+    const d = saved?.data || {};
+    const catOk = STYLE_CATEGORIES.some(c => c.id === d.cat_id);
+    const sizeOk = STYLE_SIZES.some(s => s.id === d.size_id);
+    const qualityOk = STYLE_QUALITIES.some(q => q.id === d.quality_id);
+    return {
+      cat_id: catOk ? d.cat_id : DEFAULT_STYLE_STATE.cat_id,
+      subject: typeof d.subject === 'string' ? d.subject : DEFAULT_STYLE_STATE.subject,
+      picks: (d.picks && typeof d.picks === 'object') ? d.picks : DEFAULT_STYLE_STATE.picks,
+      size_id: sizeOk ? d.size_id : DEFAULT_STYLE_STATE.size_id,
+      quality_id: qualityOk ? d.quality_id : DEFAULT_STYLE_STATE.quality_id,
+    };
+  };
+  const initial = loadInitial();
+  const [catId, setCatId] = useState(initial.cat_id);
+  const [subject, setSubject] = useState(initial.subject);
+  const [picks, setPicks] = useState(initial.picks);
+  const [sizeId, setSizeId] = useState(initial.size_id);
+  const [qualityId, setQualityId] = useState(initial.quality_id);
   const [showHelp, setShowHelp] = useState(true);
+
+  useEffect(() => {
+    LS.setObj('style.last-state', {
+      cat_id: catId, subject, picks, size_id: sizeId, quality_id: qualityId,
+    });
+  }, [catId, subject, picks, sizeId, qualityId]);
 
   const cat = STYLE_CATEGORIES.find(c => c.id === catId);
   const togglePick = (groupKey, optId) => {
@@ -4621,6 +4908,14 @@ function StyleStudioTab({ onApply, onSendAudit }) {
   const reset = () => {
     setPicks({});
     setSubject('');
+  };
+  const clearPreference = () => {
+    LS.remove('style.last-state');
+    setCatId(DEFAULT_STYLE_STATE.cat_id);
+    setSubject(DEFAULT_STYLE_STATE.subject);
+    setPicks(DEFAULT_STYLE_STATE.picks);
+    setSizeId(DEFAULT_STYLE_STATE.size_id);
+    setQualityId(DEFAULT_STYLE_STATE.quality_id);
   };
 
   return (
@@ -4750,6 +5045,7 @@ function StyleStudioTab({ onApply, onSendAudit }) {
           { label:'套用到 Claude Design', icon:'→', primary:true, onClick:()=>onApply(finalPrompt), title:'切 tab + 把 prompt 自動填到圖像描述欄' },
           { label:'送去體檢', icon:'🩺', onClick:()=>onSendAudit(finalPrompt), title:'切到 🩺 體檢 tab 看 8 維度分數' },
           { label:'清空 chips', icon:'✕', onClick:reset, title:'重置主題與所有風格 chips（保留類別與尺寸）' },
+          { label:'清除偏好', icon:'🔄', onClick:clearPreference, title:'移除 localStorage 的偏好記憶，回到預設 demo' },
         ]}
       />
     </main>
@@ -4874,14 +5170,161 @@ function LabTab({ goTab }) {
 }
 
 /* ─────────────────────────────────────
+   v2.0 Sprint 4: ⚙️ v2 設定面板（modal overlay）
+───────────────────────────────────── */
+function SettingsPanel({ open, onClose }) {
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refresh = () => setRefreshKey(k => k + 1);
+
+  if (!open) return null;
+
+  const apiRemember = LS.getStr('api-key-remember', 'false') === 'true';
+  const apiKeyExists = !!LS.getStr('api-key');
+  const lastTab = LS.getStr('last-tab');
+  const tabLabels = { smart:'🖼️ 智慧製圖', design:'🎨 Claude Design', nlm:'📑 NotebookLM', promptlab:'📚 提示詞庫', plab:'📚 提示詞庫', audit:'🩺 體檢 & 增強', style:'🎬 風格實驗室', lab:'彩蛋 🧪' };
+  const favoritesObj = LS.getObj('plab.favorites');
+  const favCount = favoritesObj?.data?.ids?.length || 0;
+  const styleObj = LS.getObj('style.last-state');
+  const stylePref = styleObj?.data?.cat_id;
+  const historyObj = LS.getObj('audit.history');
+  const historyCount = historyObj?.data?.items?.length || 0;
+  const lsKeys = LS.list();
+
+  const removeKey = name => { LS.remove(name); refresh(); };
+  const clearAll = () => {
+    const n = LS.clearAll();
+    setConfirmClearAll(false);
+    refresh();
+    setTimeout(() => {
+      if (window.confirm(`已清除 ${n} 筆 v2 本地資料。重新載入頁面以套用全部預設？`)) location.reload();
+    }, 200);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/60 flex items-start justify-center p-4 overflow-y-auto fade-in" onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()}
+        className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-2xl mt-10 mb-10">
+        <div className="flex items-center justify-between p-4 border-b border-slate-700 sticky top-0 bg-slate-900">
+          <div>
+            <h2 className="text-base font-bold text-slate-100">⚙️ v2 設定</h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">本地資料管理 · API Key · 隱私邊界</p>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-lg">✕</button>
+        </div>
+
+        <div className="p-4 space-y-4" key={refreshKey}>
+          {!LS.available && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-200">
+              ⚠️ 此瀏覽器無法寫入 localStorage。本頁仍可用，但任何持久化都會降級為 session-only。
+            </div>
+          )}
+
+          <section>
+            <h3 className="text-sm font-bold text-slate-200 mb-2">🔑 OpenAI API Key</h3>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 text-xs">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-slate-400">記住此設備</span>
+                <span className={apiRemember?'text-amber-300 font-bold':'text-slate-500'}>{apiRemember?'已啟用':'未啟用（session-only）'}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-slate-400">localStorage 中是否有 key</span>
+                <span className={apiKeyExists?'text-amber-300 font-bold':'text-slate-500'}>{apiKeyExists?'有（已保存）':'沒有'}</span>
+              </div>
+              <div className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+                請在右上角「設定 API Key」按鈕中管理 Key。本面板只顯示狀態。
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-sm font-bold text-slate-200 mb-2">📊 本地持久化狀態</h3>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 space-y-2 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-slate-300 font-semibold">最後使用的 tab</span>
+                  <span className="text-slate-500 ml-2">{lastTab ? tabLabels[lastTab] || lastTab : '（尚未記錄）'}</span>
+                </div>
+                {lastTab && <button onClick={()=>removeKey('last-tab')} className="text-[10px] text-rose-400 hover:text-rose-300">✕ 清除</button>}
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-slate-300 font-semibold">📚 Prompt Lab 收藏</span>
+                  <span className="text-slate-500 ml-2">{favCount} 筆</span>
+                </div>
+                {favCount > 0 && <button onClick={()=>removeKey('plab.favorites')} className="text-[10px] text-rose-400 hover:text-rose-300">✕ 清除</button>}
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-slate-300 font-semibold">🎬 Style Studio 偏好</span>
+                  <span className="text-slate-500 ml-2">{stylePref ? `已保存（類別：${stylePref}）` : '未保存'}</span>
+                </div>
+                {stylePref && <button onClick={()=>removeKey('style.last-state')} className="text-[10px] text-rose-400 hover:text-rose-300">✕ 清除</button>}
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-slate-300 font-semibold">🩺 體檢歷史</span>
+                  <span className="text-slate-500 ml-2">{historyCount} / 10 筆</span>
+                </div>
+                {historyCount > 0 && <button onClick={()=>removeKey('audit.history')} className="text-[10px] text-rose-400 hover:text-rose-300">✕ 清除</button>}
+              </div>
+            </div>
+            {lsKeys.length > 0 && (
+              <div className="mt-2 text-[10px] text-slate-500">
+                目前已使用的 keys：<code className="text-slate-400">{lsKeys.join(', ')}</code>
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h3 className="text-sm font-bold text-slate-200 mb-2">🔒 隱私邊界</h3>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 p-3 text-xs text-slate-400 leading-relaxed space-y-1.5">
+              <div>📍 <span className="text-slate-300 font-semibold">純本地</span>：所有資料只存在此瀏覽器的 localStorage，不會上傳。</div>
+              <div>🔓 <span className="text-slate-300 font-semibold">不加密</span>：localStorage 是純文字。共用 / 公用電腦請小心。</div>
+              <div>🌐 <span className="text-slate-300 font-semibold">不雲端同步</span>：v2.0 仍是單檔工具，沒有後端、沒有跨裝置同步。</div>
+              <div>🤖 <span className="text-slate-300 font-semibold">AI 增強會送 OpenAI</span>：點「✨ AI 增強」時 prompt 會傳到 OpenAI API；請勿輸入機密。</div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-sm font-bold text-rose-300 mb-2">⚠️ 危險區：清除所有 v2 本地資料</h3>
+            <div className="rounded-xl border border-rose-500/40 bg-rose-500/5 p-3">
+              <div className="text-xs text-slate-300 leading-relaxed mb-2">
+                這會刪除所有 <code className="text-rose-300">forma-v2.*</code> 本地資料，包括已記住的 API Key、Prompt Lab 收藏、Style 偏好、Audit 歷史、最後 tab。
+                <span className="block mt-1 text-[11px] text-slate-500">不會碰其他網站或其他 key。</span>
+              </div>
+              {!confirmClearAll ? (
+                <button onClick={()=>setConfirmClearAll(true)}
+                  className="w-full py-2 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-bold rounded-lg">
+                  🗑️ 我要清除所有 v2 本地資料…
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-[11px] text-rose-300 font-bold">確定？此動作不可還原。</div>
+                  <div className="flex gap-2">
+                    <button onClick={clearAll} className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg">確認清除全部</button>
+                    <button onClick={()=>setConfirmClearAll(false)} className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg">取消</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────
    ROOT
 ───────────────────────────────────── */
 function App() {
-  const [tab,    setTab]    = useState('smart');
-  const [apiKey, setApiKey] = useState('');   // session-only, never persisted
+  const [tab,    setTab]    = useState(() => validateTabId(LS.getStr('last-tab', 'smart')));
+  const [apiKey, setApiKey] = useState('');   // 預設 session-only；使用者 opt-in 才存 localStorage
   const [pendingDesignPrompt, setPendingDesignPrompt] = useState(null);
   const [pendingAuditText, setPendingAuditText] = useState(null);
   const [landingNote, setLandingNote] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const tabs=[
     {id:'smart', label:'🖼️ 智慧製圖'},
@@ -4894,19 +5337,22 @@ function App() {
   ];
 
   const goTab = useCallback((nextTab, note=null) => {
-    if ((note?.targetTab || nextTab) === 'audit' && note?.prompt) {
+    const validTab = validateTabId(nextTab);
+    const validTarget = validateTabId(note?.targetTab || validTab);
+    if (validTarget === 'audit' && note?.prompt) {
       setPendingAuditText(note.prompt);
     }
-    setTab(nextTab);
+    setTab(validTab);
+    LS.setStr('last-tab', validTab);
     if (note) {
       setLandingNote({
         ttlMs: 10000,
         createdAt: Date.now(),
         ...note,
-        targetTab: note.targetTab || nextTab,
+        targetTab: validTarget,
       });
     } else {
-      setLandingNote(prev => prev && prev.targetTab === nextTab ? prev : null);
+      setLandingNote(prev => prev && prev.targetTab === validTab ? prev : null);
     }
   }, []);
 
@@ -5012,7 +5458,7 @@ function App() {
                 <p className="text-xs text-amber-400/80 leading-none mt-1"><a href="./forma-studio.html" className="underline hover:text-amber-300">v1.1 穩定版仍可用 →</a></p>
               </div>
               {/* API Key 右上角 */}
-              <ApiKeyInline />
+              <ApiKeyInline openSettings={()=>setSettingsOpen(true)} />
             </div>
             {/* 頁籤列 */}
             <div className="flex border-t border-slate-800 overflow-x-auto">
@@ -5022,6 +5468,10 @@ function App() {
                   {t.label}
                 </button>
               ))}
+              <button onClick={()=>setSettingsOpen(true)}
+                className="ml-auto px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all tab-off">
+                ⚙️ 設定
+              </button>
             </div>
           </div>
         </header>
@@ -5040,6 +5490,7 @@ function App() {
         {tab==='style'  && <StyleStudioTab onApply={applyStyleToDesign} onSendAudit={sendStyleToAudit}/>}
         {tab==='lab'    && <LabTab goTab={goTab}/>}
       </div>
+      <SettingsPanel open={settingsOpen} onClose={()=>setSettingsOpen(false)}/>
     </ApiCtx.Provider>
   );
 }
