@@ -316,6 +316,70 @@ function OutBox({ text, label, hint, badge='yellow', onTextChange }) {
   );
 }
 
+function NextStepCard({ tone='emerald', title, body, steps=[], actions=[] }) {
+  if (!title && !body && !steps.length && !actions.length) return null;
+  const toneClass = {
+    emerald: 'border-emerald-500/40 bg-emerald-950/25 shadow-emerald-900/20',
+    amber:   'border-amber-500/40 bg-amber-950/25 shadow-amber-900/20',
+    cyan:    'border-cyan-500/40 bg-cyan-950/25 shadow-cyan-900/20',
+    rose:    'border-rose-500/40 bg-rose-950/25 shadow-rose-900/20',
+  }[tone] || 'border-slate-600 bg-slate-800/50';
+  const titleClass = {
+    emerald: 'text-emerald-200',
+    amber:   'text-amber-200',
+    cyan:    'text-cyan-200',
+    rose:    'text-rose-200',
+  }[tone] || 'text-slate-100';
+  const dotClass = {
+    emerald: 'bg-emerald-400',
+    amber:   'bg-amber-400',
+    cyan:    'bg-cyan-400',
+    rose:    'bg-rose-400',
+  }[tone] || 'bg-slate-400';
+  const visibleActions = actions.filter(a => !a.hidden);
+
+  const actionClass = action => {
+    if (action.kind === 'disabled' || action.disabledReason) {
+      return 'border border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed';
+    }
+    if (action.kind === 'primary') {
+      return 'bg-yellow-500 hover:bg-yellow-400 text-slate-900 shadow-lg shadow-yellow-500/10';
+    }
+    return 'border border-slate-600 bg-slate-900/45 text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200';
+  };
+
+  return (
+    <div className={`fade-in rounded-xl border p-3.5 mb-4 shadow-lg ${toneClass}`}>
+      {title && <div className={`text-sm font-black ${titleClass}`}>{title}</div>}
+      {body && <p className="mt-1 text-xs leading-relaxed text-slate-300">{body}</p>}
+      {steps.length > 0 && (
+        <ol className="mt-3 grid gap-1.5 text-xs text-slate-300">
+          {steps.map((step, idx) => (
+            <li key={`${idx}-${step}`} className="flex items-start gap-2">
+              <span className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${dotClass}`}></span>
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {visibleActions.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {visibleActions.map((action, idx) => (
+            <button key={`${idx}-${action.label}`}
+              type="button"
+              onClick={action.disabledReason || action.kind === 'disabled' ? undefined : action.onClick}
+              title={action.disabledReason || action.title || ''}
+              disabled={!!action.disabledReason || action.kind === 'disabled'}
+              className={`rounded-lg px-3 py-2 text-xs font-bold transition-all ${actionClass(action)}`}>
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SubTab({ id, label, cur, set }) {
   return (
     <button onClick={()=>set(id)}
@@ -1514,6 +1578,59 @@ Step 5 · 固化 brand-spec.md（CSS var(--brand-*)）
 
   const examples = ['把這篇文獻整理成簡報','做一張數據統計 IG 貼文','產品 Landing Page 設計稿','會議紀錄轉成六大元素文件','10 頁教學投影片給學生','活動宣傳海報 A4 直式'];
   const isDesignSub = selSub==='image'||selSub==='info'||selSub==='proto'||selSub==='brand';
+  const resetSmart = () => {
+    setTxt('');
+    setFileInfo(null);
+    setAi(null);
+    setOut('');
+    setDone(false);
+    window.scrollTo({top:0,behavior:'smooth'});
+  };
+  const copySmartOut = () => {
+    if (out) navigator.clipboard?.writeText(out).catch(()=>{});
+  };
+  const smartNext = {
+    nlm: {
+      title: '已產出 NotebookLM 任務指令',
+      body: '下一步是到 NotebookLM 建立來源導向的知識工作區，再把上方任務指令貼入對話框。',
+      primary: '進 NotebookLM',
+      target: 'nlm',
+      copy: '複製任務指令',
+      steps: ['進 NotebookLM 選任務與領域', '貼上任務指令或自定義指示', '上傳來源素材後再開始提問'],
+    },
+    image: {
+      title: '已產出圖像生成提示詞',
+      body: '下一步是進 Claude Design 精修圖像需求，確認風格、比例與標籤文字後再生成。',
+      primary: '進 Claude Design 精修',
+      target: 'design',
+      copy: '複製 prompt',
+      steps: ['帶著上方 prompt 進 Claude Design', '檢查圖像類型、風格與尺寸', '再生成可貼入圖像模型的最終 prompt'],
+    },
+    info: {
+      title: '已產出資訊圖表提示詞',
+      body: '下一步是進 Claude Design 的資訊圖表流程，把資訊層級與版面規格再收斂。',
+      primary: '進 Claude Design 製作資訊圖表',
+      target: 'design',
+      copy: '複製資訊圖表 prompt',
+      steps: ['進 Claude Design 選資訊圖表', '補齊主題、尺寸與品牌落款', '貼入上方 prompt 作為內容骨架'],
+    },
+    proto: {
+      title: '已產出 UI 原型提示詞',
+      body: '下一步是進 Claude Design 精修互動、頁面狀態與視覺哲學。',
+      primary: '進 Claude Design 精修',
+      target: 'design',
+      copy: '複製 UI prompt',
+      steps: ['進 Claude Design 選設計稿/原型', '補上已有素材與限制', '把上方 prompt 當作初稿再深化'],
+    },
+    brand: {
+      title: '已產出品牌資產提示詞',
+      body: '下一步是進 Claude Design 的品牌與評審流程，確認 Logo、產品圖、色值與字型來源。',
+      primary: '進 Claude Design 品牌評審',
+      target: 'design',
+      copy: '複製品牌資產 prompt',
+      steps: ['進 Claude Design 選品牌與評審', '補齊品牌資產現況', '用 5 維度評審檢查設計品質'],
+    },
+  }[selSub] || null;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
@@ -1668,7 +1785,27 @@ Step 5 · 固化 brand-spec.md（CSS var(--brand-*)）
               : selSub==='info'?'貼入 NotebookLM Studio 資訊圖表輸入框 / Gemini 使用'
               : '貼入 Claude Code / Cursor / Hermes 使用'
               : '貼入 NotebookLM 對話框（任務指令），或設定頁（自定義指示）使用'} />
-          <button onClick={()=>{setTxt('');setFileInfo(null);setAi(null);setOut('');setDone(false);window.scrollTo({top:0,behavior:'smooth'});}}
+          {smartNext && (
+            <NextStepCard
+              tone={isDesignSub ? 'emerald' : 'cyan'}
+              title={smartNext.title}
+              body={smartNext.body}
+              steps={smartNext.steps}
+              actions={[
+                { label: smartNext.primary, kind:'primary', onClick:()=>goTab?.(smartNext.target, {
+                  targetTab: smartNext.target,
+                  sourceTab: 'smart',
+                  sourceLabel: '智慧製圖',
+                  title: `來自智慧製圖：${smartNext.title}`,
+                  body: '上方已生成初稿 prompt。請回來複製內容，貼到目標工具的對應欄位繼續精修。',
+                  tone: isDesignSub ? 'emerald' : 'cyan',
+                }) },
+                { label: smartNext.copy, kind:'secondary', onClick:copySmartOut },
+                { label: '重新開始', kind:'secondary', onClick:resetSmart },
+              ]}
+            />
+          )}
+          <button onClick={resetSmart}
             className="w-full py-2.5 rounded-xl text-sm font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 transition-all">
             🔄 重新開始（清空全部）
           </button>
@@ -1682,7 +1819,7 @@ Step 5 · 固化 brand-spec.md（CSS var(--brand-*)）
    TAB B: NotebookLM 智慧指令中樞
    原版 5 步驟流程（完整保留）
 ───────────────────────────────────── */
-function NLMTab() {
+function NLMTab({ goTab }) {
   const [step, setStep] = useState(1);
   const [task, setTask] = useState('');
   const [domain, setDomain] = useState('');
@@ -2024,6 +2161,21 @@ ${qt[qm]}
               </div>
               <OutBox text={prompt} label="📋 任務指令 — 貼到 NotebookLM 對話框" />
               <OutBox text={customInstruction} label="⚙️ 自定義指示 — 貼到 NotebookLM 設定" badge="teal" />
+              <NextStepCard
+                tone="cyan"
+                title="NotebookLM Step 5 貼上順序"
+                body="NotebookLM 最穩的做法是先固定回答規範，再送出任務指令，最後才上傳來源素材開始提問。"
+                steps={[
+                  '先貼自定義指示：到 NotebookLM 設定，貼上角色、引用與禁止捏造規範。',
+                  '再貼任務指令：回到對話框，貼上任務、框架、深度與輸出格式。',
+                  '最後上傳來源素材：PDF、文件或簡報上傳後，再要求 NotebookLM 依來源產出。',
+                ]}
+                actions={[
+                  { label:'複製自定義指示', kind:'primary', onClick:()=>navigator.clipboard?.writeText(customInstruction).catch(()=>{}) },
+                  { label:'複製任務指令', kind:'secondary', onClick:()=>navigator.clipboard?.writeText(prompt).catch(()=>{}) },
+                  { label:'回 Smart 重新分類', kind:'secondary', onClick:()=>goTab?.('smart') },
+                ]}
+              />
               <div className="flex items-center gap-2 p-3 bg-red-900/20 border border-red-500/30 rounded-lg mb-4">
                 <span className="text-lg">🛡️</span>
                 <div><div className="text-xs font-bold text-red-400">Zero Hallucination 防護已啟用</div>
@@ -2615,6 +2767,18 @@ ${lowDims.length>0
       </div>}
 
       {mode==='review' && <div>
+        <NextStepCard
+          tone="amber"
+          title="5 維度評審說明"
+          body="這是自評起點，不是 AI 最終品質保證。分數用來暴露討論方向，真正的修復仍要回到具體畫面與受眾情境。"
+          steps={[
+            '哲學一致性：設計語言是否一以貫之。',
+            '視覺層級：重要資訊是否對應最大的視覺重量。',
+            '細節執行：間距、字距、對齊與色彩是否到位。',
+            '功能性：受眾是否能在 3 秒內理解核心訊息。',
+            '創新性：是否有一個讓畫面被記住的明確決策。',
+          ]}
+        />
         <div className="mb-4">
           <TextWithFile
             value={rDesc} onChange={setRDesc} rows={3}
@@ -2647,7 +2811,7 @@ ${lowDims.length>0
 
 
 
-function DesignTab({ pendingDesignPrompt, onPendingDesignPromptConsumed }) {
+function DesignTab({ pendingDesignPrompt, onPendingDesignPromptConsumed, landingNote, clearLandingNote, goTab }) {
   const { key: apiKey } = useContext(ApiCtx);
 
   /* ─── Step 協調 ─── */
@@ -2927,6 +3091,21 @@ n: ${thinking ? 4 : 2}`
       <div id="dt-step-1" className={sc(1)}>
         <StepBadge n={1} label="描述需求"/>
         <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-5">
+          {landingNote?.targetTab === 'design' && (
+            <NextStepCard
+              tone={landingNote.tone || 'cyan'}
+              title={landingNote.title || '已帶入跨頁籤內容'}
+              body={landingNote.body}
+              steps={[
+                `來源：${landingNote.sourceLabel || landingNote.sourceTab || '其他頁籤'}`,
+                '目標：Claude Design Step 1 已預填需求描述。',
+                '請確認內容是否仍符合目前任務，再繼續設定受眾與製圖方式。',
+              ]}
+              actions={[
+                { label:'知道了', kind:'secondary', onClick:clearLandingNote },
+              ]}
+            />
+          )}
           <div
             onDrop={e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);}}
             onDragOver={e=>e.preventDefault()}
@@ -3312,6 +3491,21 @@ n: ${thinking ? 4 : 2}`
                 <OutBox text={out} label="🎨 圖像生成 Prompt"
                   hint={thinking ? '★ Thinking 模式：AI 自我驗證後輸出 4 張候選圖' : '標準模式：出 2 張候選圖'}
                   onTextChange={setOut} />
+                <NextStepCard
+                  tone="emerald"
+                  title="已產出圖像 prompt"
+                  body="這裡產出的是 prompt，不是圖片。請複製後貼入 GPT Image 2 / Midjourney / 其他圖像工具，或回上一步調整描述與風格。"
+                  steps={[
+                    '先複製圖像 prompt。',
+                    '貼入圖像生成工具並檢查候選圖。',
+                    '若構圖或標籤不準，回 Step 3 調整描述與類型。',
+                  ]}
+                  actions={[
+                    { label:'複製圖像 prompt', kind:'primary', onClick:()=>navigator.clipboard?.writeText(out).catch(()=>{}) },
+                    { label:'回 Step 3 調整', kind:'secondary', onClick:()=>goStep(3) },
+                    { label:'到 Prompt Lab 找參考', kind:'secondary', onClick:()=>goTab?.('promptlab') },
+                  ]}
+                />
               </div>
             )}
           </div>
@@ -3465,11 +3659,12 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
       {expanded ? (
         <div className="mt-3 space-y-3">
           <div className="rounded-xl border border-emerald-400/20 bg-emerald-950/20 p-3 text-xs leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
+            <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-emerald-300">中文翻譯（閱讀用）</div>
             {item.promptZh || item.englishPrompt}
           </div>
           {item.promptZh && (
             <div className="rounded-xl border border-slate-700 bg-slate-950/65 p-3">
-              <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-slate-400">英文原文（可複製）</div>
+              <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-slate-400">英文原文（可複製） · 英文原文（建議複製 / 套用）</div>
               <p className="text-xs leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
                 {item.englishPrompt}
               </p>
@@ -3477,9 +3672,12 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
           )}
         </div>
       ) : (
-        <p className="mt-3 max-h-20 overflow-hidden text-xs leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
-          {item.previewText}
-        </p>
+        <div className="mt-3">
+          <div className="mb-1 text-[11px] font-black uppercase tracking-wide text-slate-500">中文摘要（快速理解，不是要複製的 prompt）</div>
+          <p className="max-h-20 overflow-hidden text-xs leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+            {item.previewText}
+          </p>
+        </div>
       )}
 
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -3516,14 +3714,14 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
         </button>
         <button onClick={() => onApplyToDesign(item)}
           className="min-w-0 rounded-lg bg-yellow-500 px-2 py-2 text-xs font-black leading-snug text-slate-900 hover:bg-yellow-400">
-          套用到 Claude Design
+          套用英文 prompt 到 Claude Design（套用到 Claude Design）
         </button>
       </div>
     </article>
   );
 }
 
-function PromptLabTab({ onApplyToDesign }) {
+function PromptLabTab({ onApplyToDesign, goTab }) {
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -3654,13 +3852,29 @@ function PromptLabTab({ onApplyToDesign }) {
         <div className="mt-5 rounded-2xl border border-red-500/40 bg-red-900/20 p-5">
           <div className="text-sm font-bold text-red-200">提示詞庫載入失敗</div>
           <div className="mt-1 text-xs text-red-100/80">{error}</div>
-          <button onClick={runLoad} className="mt-3 rounded-lg bg-red-500 px-3 py-2 text-xs font-bold text-white">重試</button>
+          <NextStepCard
+            tone="rose"
+            title="載入失敗時的下一步"
+            body="可先重試提示詞庫；如果仍無法載入，回 Claude Design 手動輸入需求，不會卡在空白流程。"
+            actions={[
+              { label:'重試', kind:'primary', onClick:runLoad },
+              { label:'回 Claude Design', kind:'secondary', onClick:()=>goTab?.('design') },
+            ]}
+          />
         </div>
       )}
 
       {!loading && !error && loaded && visiblePrompts.length === 0 && (
         <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-800/45 p-6 text-sm text-slate-300">
-          沒有符合的 prompt。請調整搜尋或分類。
+          <NextStepCard
+            tone="amber"
+            title="沒有符合的 prompt"
+            body="請調整搜尋或分類；也可以先回 Claude Design 手動輸入需求。"
+            actions={[
+              { label:'重設篩選', kind:'primary', onClick:resetFilters },
+              { label:'回 Claude Design', kind:'secondary', onClick:()=>goTab?.('design') },
+            ]}
+          />
         </div>
       )}
 
@@ -3686,7 +3900,7 @@ function PromptLabTab({ onApplyToDesign }) {
 /* ─────────────────────────────────────
    TAB D: 彩蛋 Lab
 ───────────────────────────────────── */
-function LabTab() {
+function LabTab({ goTab }) {
   const [mode,  setMode]  = useState('');
   const [input, setInput] = useState('');
   const [out,   setOut]   = useState('');
@@ -3698,6 +3912,32 @@ function LabTab() {
     {id:'batch', icon:'⚡', name:'四受眾批次',     desc:'一次生成 4 個不同受眾版本'},
   ];
   const hints={viral:'輸入簡報主題或摘要，改寫成最容易社群瘋傳的版本',ted:'輸入主題與核心觀點，用 TED 三段式重組',anti:'貼入已有的提示詞，診斷出所有 AI slop 問題',batch:'輸入主題，一次生成 4 個不同受眾版本'};
+  const nextByMode = {
+    viral: {
+      title:'病毒傳播版已完成',
+      body:'下一步建議進 NotebookLM，把這版當作簡報或社群腳本的任務指令，再用來源素材校準內容。',
+      primary:'進 NotebookLM',
+      steps:['複製實驗輸出', '進 NotebookLM 建立來源工作區', '要求 NotebookLM 依素材重寫成可發佈版本'],
+    },
+    ted: {
+      title:'TED 風格版已完成',
+      body:'下一步建議進 NotebookLM，用來源素材補足故事、證據與轉折，避免只留下漂亮結構。',
+      primary:'進 NotebookLM',
+      steps:['複製 TED 結構', '進 NotebookLM 上傳來源素材', '要求 NotebookLM 補齊例子與引用'],
+    },
+    batch: {
+      title:'四受眾批次已完成',
+      body:'下一步建議進 NotebookLM，將不同受眾版本與來源素材對齊，確認每版語氣與證據一致。',
+      primary:'進 NotebookLM',
+      steps:['複製四受眾版本', '進 NotebookLM 建立來源工作區', '逐一檢查受眾語氣與內容正確性'],
+    },
+    anti: {
+      title:'反 AI Slop 診斷已完成',
+      body:'本輪不導向未存在的體檢模組。請先複製診斷結果，或回智慧入口重新生成更乾淨的 prompt。',
+      primary:'複製診斷結果',
+      steps:['先修掉診斷出的通用美學問題', '回智慧入口重新分類需求', '再進對應工具生成正式 prompt'],
+    },
+  };
 
   const run=()=>{
     if(!input.trim()||!mode)return;
@@ -3736,6 +3976,31 @@ function LabTab() {
         <button onClick={run} className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg text-sm transition-all mb-4">🧪 執行實驗</button>
       </>}
       <OutBox text={out} label="🧪 實驗輸出"/>
+      {out && nextByMode[mode] && (
+        <NextStepCard
+          tone={mode === 'anti' ? 'amber' : 'cyan'}
+          title={nextByMode[mode].title}
+          body={nextByMode[mode].body}
+          steps={nextByMode[mode].steps}
+          actions={mode === 'anti'
+            ? [
+                { label:nextByMode[mode].primary, kind:'primary', onClick:()=>navigator.clipboard?.writeText(out).catch(()=>{}) },
+                { label:'回 Smart 重新分類', kind:'secondary', onClick:()=>goTab?.('smart') },
+              ]
+            : [
+                { label:nextByMode[mode].primary, kind:'primary', onClick:()=>goTab?.('nlm', {
+                  targetTab:'nlm',
+                  sourceTab:'lab',
+                  sourceLabel:'彩蛋 Lab',
+                  title:`來自彩蛋 Lab：${nextByMode[mode].title}`,
+                  body:'實驗輸出已完成。請複製上方內容，進 NotebookLM 後搭配來源素材使用。',
+                  tone:'cyan',
+                }) },
+                { label:'複製實驗輸出', kind:'secondary', onClick:()=>navigator.clipboard?.writeText(out).catch(()=>{}) },
+                { label:'回 Smart 重新分類', kind:'secondary', onClick:()=>goTab?.('smart') },
+              ]}
+        />
+      )}
     </div>
   );
 }
@@ -3747,6 +4012,7 @@ function App() {
   const [tab,    setTab]    = useState('design');
   const [apiKey, setApiKey] = useState('');   // session-only, never persisted
   const [pendingDesignPrompt, setPendingDesignPrompt] = useState(null);
+  const [landingNote, setLandingNote] = useState(null);
 
   const tabs=[
     {id:'design',label:'🎨 Claude Design'},
@@ -3755,6 +4021,26 @@ function App() {
     {id:'promptlab', label:'📚 提示詞庫'},
     {id:'lab',   label:'彩蛋 🧪'},
   ];
+
+  const goTab = useCallback((nextTab, note=null) => {
+    setTab(nextTab);
+    if (note) {
+      setLandingNote({
+        ttlMs: 10000,
+        createdAt: Date.now(),
+        ...note,
+        targetTab: note.targetTab || nextTab,
+      });
+    } else {
+      setLandingNote(prev => prev && prev.targetTab === nextTab ? prev : null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!landingNote?.ttlMs) return;
+    const timer = setTimeout(() => setLandingNote(cur => cur === landingNote ? null : cur), landingNote.ttlMs);
+    return () => clearTimeout(timer);
+  }, [landingNote]);
 
   const applyPromptToDesign = promptItem => {
     setPendingDesignPrompt({
@@ -3766,7 +4052,14 @@ function App() {
       sourceRepo: promptItem.sourceRepo,
       sourceLicense: promptItem.sourceLicense,
     });
-    setTab('design');
+    goTab('design', {
+      targetTab: 'design',
+      sourceTab: 'promptlab',
+      sourceLabel: 'Prompt Lab 提示詞庫',
+      title: '已從 Prompt Lab 套用英文 prompt',
+      body: `來源：${promptItem.titleZh || promptItem.title}。目標：Claude Design Step 1。已預填英文原文 prompt，可先檢查內容再繼續設計流程。`,
+      tone: 'cyan',
+    });
   };
 
   return (
@@ -3790,7 +4083,7 @@ function App() {
             {/* 頁籤列 */}
             <div className="flex border-t border-slate-800 overflow-x-auto">
               {tabs.map(t=>(
-                <button key={t.id} onClick={()=>setTab(t.id)}
+                <button key={t.id} onClick={()=>goTab(t.id)}
                   className={`px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${tab===t.id?'tab-on':'tab-off'}`}>
                   {t.label}
                 </button>
@@ -3799,14 +4092,17 @@ function App() {
           </div>
         </header>
 
-        {tab==='smart'  && <SmartTab goTab={setTab}/>}
-        {tab==='nlm'    && <NLMTab/>}
+        {tab==='smart'  && <SmartTab goTab={goTab}/>}
+        {tab==='nlm'    && <NLMTab goTab={goTab}/>}
         {tab==='design' && <DesignTab
           pendingDesignPrompt={pendingDesignPrompt}
           onPendingDesignPromptConsumed={()=>setPendingDesignPrompt(null)}
+          landingNote={landingNote}
+          clearLandingNote={()=>setLandingNote(null)}
+          goTab={goTab}
         />}
-        {tab==='promptlab' && <PromptLabTab onApplyToDesign={applyPromptToDesign}/>}
-        {tab==='lab'    && <LabTab/>}
+        {tab==='promptlab' && <PromptLabTab onApplyToDesign={applyPromptToDesign} goTab={goTab}/>}
+        {tab==='lab'    && <LabTab goTab={goTab}/>}
       </div>
     </ApiCtx.Provider>
   );
