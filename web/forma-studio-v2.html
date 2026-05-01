@@ -2647,7 +2647,7 @@ ${lowDims.length>0
 
 
 
-function DesignTab() {
+function DesignTab({ pendingDesignPrompt, onPendingDesignPromptConsumed }) {
   const { key: apiKey } = useContext(ApiCtx);
 
   /* ─── Step 協調 ─── */
@@ -2667,6 +2667,7 @@ function DesignTab() {
   const [feel,        setFeel]        = useState([]);
   const [hasRef,      setHasRef]      = useState([]);
   const [advisorOut,  setAdvisorOut]  = useState('');
+  const [pendingNotice,setPendingNotice]=useState('');
 
   /* ─── v2.5 Gallery state ─── */
   const [industries,  setIndustries]  = useState([]);
@@ -2697,6 +2698,14 @@ function DesignTab() {
     setShowGallery(false);
     goStep(3);
   };
+
+  useEffect(() => {
+    if (!pendingDesignPrompt) return;
+    setTxt(pendingDesignPrompt.prompt || '');
+    setPendingNotice(`已從提示詞庫套用：${pendingDesignPrompt.title || pendingDesignPrompt.id}`);
+    goStep(1);
+    onPendingDesignPromptConsumed?.();
+  }, [pendingDesignPrompt]);
 
   /* ─── 圖像類型卡片（8 種通用類型）─── */
   const categories = [
@@ -2969,6 +2978,12 @@ n: ${thinking ? 4 : 2}`
           <textarea rows={3} value={txt} onChange={e=>setTxt(e.target.value)}
             placeholder="例如：做一個 B2B SaaS 產品的 Landing Page，目標客群是中小企業主管，要有科技感但不冷漠"
             className="w-full bg-slate-950 border-2 border-slate-600 rounded-xl p-3 text-sm text-white placeholder-slate-600 focus:border-yellow-400 focus:outline-none resize-y transition-all"/>
+
+          {pendingNotice && (
+            <div className="mt-3 rounded-xl border border-emerald-500/40 bg-emerald-900/20 px-3 py-2 text-xs font-semibold text-emerald-200">
+              {pendingNotice}
+            </div>
+          )}
 
           {sec1Done && dtStep<=1 && (
             <button onClick={()=>goStep(2)}
@@ -3308,6 +3323,299 @@ n: ${thinking ? 4 : 2}`
 }
 
 /* ─────────────────────────────────────
+   PROMPT LAB HELPERS + COMPONENTS
+───────────────────────────────────── */
+async function loadPromptLibrary() {
+  const indexRes = await fetch('./prompt-library/gallery-index.json', { cache:'no-store' });
+  if (!indexRes.ok) throw new Error(`gallery-index.json 載入失敗：HTTP ${indexRes.status}`);
+  const index = await indexRes.json();
+  if (!Array.isArray(index.categories)) throw new Error('gallery-index.json 缺少 categories array');
+
+  const categoryData = await Promise.all(index.categories.map(async meta => {
+    const res = await fetch(`./prompt-library/${meta.file}`, { cache:'no-store' });
+    if (!res.ok) throw new Error(`${meta.file} 載入失敗：HTTP ${res.status}`);
+    return { meta, data: await res.json() };
+  }));
+
+  const prompts = categoryData.flatMap(({ meta, data }) => {
+    const categorySource = data.source || meta.source || index.source || {};
+    return (data.prompts || []).map((p, idx) => {
+      const source = p.source || categorySource || {};
+      const industries = Array.isArray(p.industries) ? p.industries : (data.industries || meta.industries || []);
+      const useCases = data.use_cases || meta.use_cases || [];
+      const promptText = String(p.prompt || '');
+      const title = p.title || `Prompt ${p.no || idx + 1}`;
+      const searchParts = [
+        title, promptText, data.category, data.title_zh, meta.category, meta.title_zh,
+        ...(industries || []), ...(useCases || []), p.credit, source.author
+      ];
+      return {
+        id: p.id || `${meta.slug}-${p.no || idx + 1}`,
+        no: p.no || idx + 1,
+        title,
+        prompt: promptText,
+        size: p.size || '',
+        pixel: p.pixel || '',
+        credit: p.credit || '',
+        categorySlug: data.slug || meta.slug,
+        categoryTitle: data.category || meta.category || meta.slug,
+        categoryTitleZh: data.title_zh || meta.title_zh || data.category || meta.slug,
+        industries,
+        useCases,
+        sourceRepo: source.repo || categorySource.repo || index.source?.repo || 'source n/a',
+        sourceLicense: source.license || categorySource.license || index.source?.license || 'license n/a',
+        sourceAuthor: source.author || '',
+        sourceUrl: source.url || categorySource.url || index.source?.base_url || '',
+        searchText: searchParts.filter(Boolean).join(' ').toLowerCase(),
+        previewText: promptText.length > 220 ? `${promptText.slice(0, 220).trim()}...` : promptText,
+      };
+    });
+  });
+
+  const uniqueIds = new Set(prompts.map(p => p.id));
+  const categoryCountSum = index.categories.reduce((sum, c) => sum + Number(c.count || 0), 0);
+  const warnings = [];
+  if (uniqueIds.size !== 116) warnings.push(`Unique prompt id 數為 ${uniqueIds.size}，預期 116`);
+  if (categoryCountSum !== Number(index.total_count || 0)) {
+    console.warn('[Forma Studio] category count sum mismatch', { categoryCountSum, total_count:index.total_count });
+    warnings.push(`分類 count 加總 ${categoryCountSum} 不等於 index total ${index.total_count}`);
+  }
+
+  return { index, categories:index.categories, prompts, warnings };
+}
+
+function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesign }) {
+  const tags = [
+    item.categoryTitleZh,
+    ...(item.industries || []).slice(0, 3),
+    ...(item.useCases || []).slice(0, 2),
+    item.size,
+    item.sourceAuthor || item.credit,
+  ].filter(Boolean).slice(0, 8);
+
+  return (
+    <article className="prompt-lab-card rounded-2xl border border-slate-700 bg-slate-800/55 p-4 flex flex-col min-w-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-yellow-300">{item.categoryTitleZh}</div>
+          <h3 className="mt-1 text-sm font-black text-white leading-snug">{item.title}</h3>
+        </div>
+        <span className="shrink-0 rounded-lg bg-slate-900/80 border border-slate-700 px-2 py-1 text-[11px] font-bold text-slate-300">
+          #{item.no}
+        </span>
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-300">
+        <span className="rounded-md bg-slate-900/70 px-2 py-1">{item.size || 'size n/a'}</span>
+        {item.pixel && <span className="rounded-md bg-slate-900/70 px-2 py-1">{item.pixel}</span>}
+        <span className="rounded-md bg-slate-900/70 px-2 py-1">{item.sourceAuthor || item.credit || 'credit n/a'}</span>
+      </div>
+
+      <p className={`mt-3 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap ${expanded ? '' : 'max-h-24 overflow-hidden'}`}>
+        {expanded ? item.prompt : item.previewText}
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {tags.map(tag => (
+          <span key={tag} className="rounded-full border border-slate-700 bg-slate-900/45 px-2 py-1 text-[11px] text-slate-400">
+            {tag}
+          </span>
+        ))}
+      </div>
+
+      {expanded && (
+        <div className="mt-3 rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-xs text-slate-300">
+          <div className="font-bold text-slate-100 mb-1">完整 attribution</div>
+          <div>Repo: {item.sourceRepo}</div>
+          <div>License: {item.sourceLicense}</div>
+          <div>Author: {item.sourceAuthor || item.credit || 'n/a'}</div>
+          {item.sourceUrl && <div className="break-all">URL: {item.sourceUrl}</div>}
+          {(item.industries?.length || item.useCases?.length) && (
+            <div className="mt-2 text-slate-400">
+              {[...(item.industries || []), ...(item.useCases || [])].join(' · ')}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <button onClick={onToggle}
+          className="rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200">
+          {expanded ? '收合' : '展開'}
+        </button>
+        <button onClick={() => onCopy(item)}
+          className="rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-emerald-400/60 hover:text-emerald-200">
+          {copied ? '已複製' : '複製 prompt'}
+        </button>
+        <button onClick={() => onApplyToDesign(item)}
+          className="rounded-lg bg-yellow-500 px-2 py-2 text-xs font-black text-slate-900 hover:bg-yellow-400">
+          套用到 Claude Design
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function PromptLabTab({ onApplyToDesign }) {
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [indexMeta, setIndexMeta] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [prompts, setPrompts] = useState([]);
+  const [warnings, setWarnings] = useState([]);
+  const [query, setQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState('all');
+  const [expandedIds, setExpandedIds] = useState([]);
+  const [copiedId, setCopiedId] = useState('');
+
+  const runLoad = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await loadPromptLibrary();
+      setIndexMeta(data.index);
+      setCategories(data.categories);
+      setPrompts(data.prompts);
+      setWarnings(data.warnings);
+      setLoaded(true);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!loaded && !loading && !error) runLoad();
+  }, [loaded, loading, error, runLoad]);
+
+  const totalCount = indexMeta?.total_count || prompts.length;
+  const visiblePrompts = prompts.filter(item => {
+    const categoryOk = activeCategory === 'all' || item.categorySlug === activeCategory;
+    const queryOk = !query.trim() || item.searchText.includes(query.trim().toLowerCase());
+    return categoryOk && queryOk;
+  });
+  const sourceSummary = indexMeta?.sources || [];
+
+  const toggleExpanded = id => setExpandedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const copyPrompt = async item => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(item.prompt);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = item.prompt;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedId(item.id);
+      setTimeout(() => setCopiedId(cur => cur === item.id ? '' : cur), 1800);
+    } catch (e) {
+      setError(`複製失敗：${e.message || e}`);
+    }
+  };
+
+  const resetFilters = () => {
+    setQuery('');
+    setActiveCategory('all');
+  };
+
+  return (
+    <main className="max-w-6xl mx-auto px-4 py-6">
+      <section className="rounded-2xl border border-slate-700 bg-slate-800/45 p-5">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+          <div>
+            <div className="text-xs font-black text-yellow-300 uppercase tracking-wide">Prompt Lab</div>
+            <h2 className="mt-1 text-2xl font-black text-white">提示詞庫</h2>
+            <p className="mt-2 text-sm text-slate-300 leading-relaxed">
+              共 {totalCount || 116} 條 prompt · CC BY 4.0 · 以 gallery-index.json 載入 18 個分類。
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-700 bg-slate-950/55 p-3 text-xs text-slate-300 min-w-[240px]">
+            <div className="font-bold text-slate-100 mb-1">來源</div>
+            {sourceSummary.length ? sourceSummary.map(src => (
+              <div key={src.repo} className="flex justify-between gap-3">
+                <span>{src.repo}</span><span className="text-slate-500">{src.count}</span>
+              </div>
+            )) : <div>wuyoscar/gpt_image_2_skill · EvoLinkAI/awesome-gpt-image-2-prompts</div>}
+            <div className="mt-1 text-slate-500">License: CC BY 4.0</div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid md:grid-cols-[1fr_auto] gap-3">
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="搜尋 title / prompt / category，中英關鍵字皆可"
+            className="w-full rounded-xl border-2 border-slate-600 bg-slate-950 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-yellow-400 focus:outline-none"
+            aria-label="搜尋提示詞"
+          />
+          <button onClick={resetFilters}
+            className="rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200">
+            重設篩選
+          </button>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button onClick={() => setActiveCategory('all')}
+            className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategory==='all'?'border-yellow-400 bg-yellow-400/15 text-yellow-200':'border-slate-700 bg-slate-900/50 text-slate-300 hover:border-slate-500'}`}>
+            全部 ({totalCount || prompts.length})
+          </button>
+          {categories.map(cat => (
+            <button key={cat.slug} onClick={() => setActiveCategory(cat.slug)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-bold ${activeCategory===cat.slug?'border-yellow-400 bg-yellow-400/15 text-yellow-200':'border-slate-700 bg-slate-900/50 text-slate-300 hover:border-slate-500'}`}>
+              {cat.title_zh || cat.category} ({cat.count})
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <div className="font-bold text-slate-200">目前命中 {visiblePrompts.length} / {totalCount || prompts.length}</div>
+          {warnings.length > 0 && <div className="text-xs text-amber-300">{warnings.join('；')}</div>}
+        </div>
+      </section>
+
+      {loading && (
+        <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-800/45 p-6 text-sm text-slate-300">載入提示詞庫中...</div>
+      )}
+
+      {error && (
+        <div className="mt-5 rounded-2xl border border-red-500/40 bg-red-900/20 p-5">
+          <div className="text-sm font-bold text-red-200">提示詞庫載入失敗</div>
+          <div className="mt-1 text-xs text-red-100/80">{error}</div>
+          <button onClick={runLoad} className="mt-3 rounded-lg bg-red-500 px-3 py-2 text-xs font-bold text-white">重試</button>
+        </div>
+      )}
+
+      {!loading && !error && loaded && visiblePrompts.length === 0 && (
+        <div className="mt-5 rounded-2xl border border-slate-700 bg-slate-800/45 p-6 text-sm text-slate-300">
+          沒有符合的 prompt。請調整搜尋或分類。
+        </div>
+      )}
+
+      {!error && visiblePrompts.length > 0 && (
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {visiblePrompts.map(item => (
+            <PromptLabCard
+              key={item.id}
+              item={item}
+              expanded={expandedIds.includes(item.id)}
+              onToggle={() => toggleExpanded(item.id)}
+              onCopy={copyPrompt}
+              copied={copiedId === item.id}
+              onApplyToDesign={onApplyToDesign}
+            />
+          ))}
+        </div>
+      )}
+    </main>
+  );
+}
+
+/* ─────────────────────────────────────
    TAB D: 彩蛋 Lab
 ───────────────────────────────────── */
 function LabTab() {
@@ -3370,13 +3678,28 @@ function LabTab() {
 function App() {
   const [tab,    setTab]    = useState('design');
   const [apiKey, setApiKey] = useState('');   // session-only, never persisted
+  const [pendingDesignPrompt, setPendingDesignPrompt] = useState(null);
 
   const tabs=[
     {id:'design',label:'🎨 Claude Design'},
     {id:'nlm',   label:'📑 NotebookLM'},
     {id:'smart', label:'🖼️ 智慧製圖'},
+    {id:'promptlab', label:'📚 提示詞庫'},
     {id:'lab',   label:'彩蛋 🧪'},
   ];
+
+  const applyPromptToDesign = promptItem => {
+    setPendingDesignPrompt({
+      id: promptItem.id,
+      title: promptItem.title,
+      prompt: promptItem.prompt,
+      categorySlug: promptItem.categorySlug,
+      categoryTitle: promptItem.categoryTitle,
+      sourceRepo: promptItem.sourceRepo,
+      sourceLicense: promptItem.sourceLicense,
+    });
+    setTab('design');
+  };
 
   return (
     <ApiCtx.Provider value={{ key:apiKey, setKey:setApiKey }}>
@@ -3397,7 +3720,7 @@ function App() {
               <ApiKeyInline />
             </div>
             {/* 頁籤列 */}
-            <div className="flex border-t border-slate-800">
+            <div className="flex border-t border-slate-800 overflow-x-auto">
               {tabs.map(t=>(
                 <button key={t.id} onClick={()=>setTab(t.id)}
                   className={`px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${tab===t.id?'tab-on':'tab-off'}`}>
@@ -3410,7 +3733,11 @@ function App() {
 
         {tab==='smart'  && <SmartTab goTab={setTab}/>}
         {tab==='nlm'    && <NLMTab/>}
-        {tab==='design' && <DesignTab/>}
+        {tab==='design' && <DesignTab
+          pendingDesignPrompt={pendingDesignPrompt}
+          onPendingDesignPromptConsumed={()=>setPendingDesignPrompt(null)}
+        />}
+        {tab==='promptlab' && <PromptLabTab onApplyToDesign={applyPromptToDesign}/>}
         {tab==='lab'    && <LabTab/>}
       </div>
     </ApiCtx.Provider>
