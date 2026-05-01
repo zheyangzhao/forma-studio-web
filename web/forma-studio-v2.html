@@ -3325,22 +3325,31 @@ n: ${thinking ? 4 : 2}`
 /* ─────────────────────────────────────
    PROMPT LAB HELPERS + COMPONENTS
 ───────────────────────────────────── */
-async function loadPromptTitleTranslations() {
+function cleanTranslationMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([, text]) => typeof text === 'string' && text.trim()));
+}
+
+async function loadPromptZhTranslations() {
   try {
     const res = await fetch('./prompt-library/translations-zh.json', { cache:'no-store' });
     if (!res.ok) throw new Error(`translations-zh.json 載入失敗：HTTP ${res.status}`);
     const data = await res.json();
-    if (data?.schema_version !== 2) {
-      console.warn('[Forma Studio] translations-zh.json schema_version mismatch', data?.schema_version);
+    if (![2, 3].includes(data?.schema_version)) {
+      console.warn('[Forma Studio] translations-zh.json unknown schema_version', data?.schema_version);
     }
     if (!data?.titles || typeof data.titles !== 'object' || Array.isArray(data.titles)) {
       console.warn('[Forma Studio] translations-zh.json 缺少 titles object');
-      return {};
     }
-    return Object.fromEntries(Object.entries(data.titles).filter(([, value]) => typeof value === 'string' && value.trim()));
+    return {
+      titles: cleanTranslationMap(data?.titles),
+      summaries: cleanTranslationMap(data?.summaries),
+      prompts: cleanTranslationMap(data?.prompts),
+      schemaVersion: data?.schema_version || null,
+    };
   } catch (error) {
-    console.warn('[Forma Studio] translations-zh.json unavailable; falling back to English titles', error);
-    return {};
+    console.warn('[Forma Studio] translations-zh.json unavailable; falling back to English prompt library', error);
+    return { titles:{}, summaries:{}, prompts:{}, schemaVersion:null };
   }
 }
 
@@ -3352,7 +3361,7 @@ async function loadPromptLibrary() {
     if (!Array.isArray(index.categories)) throw new Error('gallery-index.json 缺少 categories array');
     return index;
   })();
-  const [index, titleTranslations] = await Promise.all([indexPromise, loadPromptTitleTranslations()]);
+  const [index, zhTranslations] = await Promise.all([indexPromise, loadPromptZhTranslations()]);
 
   const categoryData = await Promise.all(index.categories.map(async meta => {
     const res = await fetch(`./prompt-library/${meta.file}`, { cache:'no-store' });
@@ -3371,9 +3380,12 @@ async function loadPromptLibrary() {
       const id = p.id || `${meta.slug}-${p.no || idx + 1}`;
       const categoryTitle = data.category || meta.category || meta.slug;
       const categoryTitleZh = data.title_zh || meta.title_zh || data.category || meta.slug;
-      const titleZh = titleTranslations[id] || null;
+      const titleZh = zhTranslations.titles[id] || null;
+      const summaryZh = zhTranslations.summaries[id] || null;
+      const promptZh = zhTranslations.prompts[id] || null;
+      const englishPreview = promptText.length > 180 ? `${promptText.slice(0, 180).trim()}...` : promptText;
       const searchParts = [
-        title, titleZh, promptText, data.category, data.title_zh, meta.category, meta.title_zh, categoryTitle, categoryTitleZh,
+        title, titleZh, summaryZh, promptZh, promptText, data.category, data.title_zh, meta.category, meta.title_zh, categoryTitle, categoryTitleZh,
         ...(industries || []), ...(useCases || []), p.credit, source.author
       ];
       return {
@@ -3381,8 +3393,11 @@ async function loadPromptLibrary() {
         no: p.no || idx + 1,
         title,
         titleZh,
+        summaryZh,
+        promptZh,
         translationKey: id,
         prompt: promptText,
+        englishPrompt: promptText,
         size: p.size || '',
         pixel: p.pixel || '',
         credit: p.credit || '',
@@ -3396,7 +3411,7 @@ async function loadPromptLibrary() {
         sourceAuthor: source.author || '',
         sourceUrl: source.url || categorySource.url || index.source?.base_url || '',
         searchText: searchParts.filter(Boolean).join(' ').toLowerCase(),
-        previewText: promptText.length > 220 ? `${promptText.slice(0, 220).trim()}...` : promptText,
+        previewText: summaryZh || englishPreview,
       };
     });
   });
@@ -3447,9 +3462,25 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
         <span className="rounded-md bg-slate-900/70 px-2 py-1">{item.sourceAuthor || item.credit || 'credit n/a'}</span>
       </div>
 
-      <p className={`mt-3 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap ${expanded ? '' : 'max-h-24 overflow-hidden'}`}>
-        {expanded ? item.prompt : item.previewText}
-      </p>
+      {expanded ? (
+        <div className="mt-3 space-y-3">
+          <div className="rounded-xl border border-emerald-400/20 bg-emerald-950/20 p-3 text-xs leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
+            {item.promptZh || item.englishPrompt}
+          </div>
+          {item.promptZh && (
+            <div className="rounded-xl border border-slate-700 bg-slate-950/65 p-3">
+              <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-slate-400">英文原文（可複製）</div>
+              <p className="text-xs leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+                {item.englishPrompt}
+              </p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 max-h-20 overflow-hidden text-xs leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+          {item.previewText}
+        </p>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-1.5">
         {tags.map(tag => (
@@ -3474,17 +3505,17 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <button onClick={onToggle}
-          className="rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200">
+          className="min-w-0 rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200">
           {expanded ? '收合' : '展開'}
         </button>
         <button onClick={() => onCopy(item)}
-          className="rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-emerald-400/60 hover:text-emerald-200">
+          className="min-w-0 rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-emerald-400/60 hover:text-emerald-200">
           {copied ? '已複製' : '複製 prompt'}
         </button>
         <button onClick={() => onApplyToDesign(item)}
-          className="rounded-lg bg-yellow-500 px-2 py-2 text-xs font-black text-slate-900 hover:bg-yellow-400">
+          className="min-w-0 rounded-lg bg-yellow-500 px-2 py-2 text-xs font-black leading-snug text-slate-900 hover:bg-yellow-400">
           套用到 Claude Design
         </button>
       </div>
@@ -3536,12 +3567,13 @@ function PromptLabTab({ onApplyToDesign }) {
 
   const toggleExpanded = id => setExpandedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const copyPrompt = async item => {
+    const textToCopy = item.englishPrompt || item.prompt || '';
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(item.prompt);
+        await navigator.clipboard.writeText(textToCopy);
       } else {
         const ta = document.createElement('textarea');
-        ta.value = item.prompt;
+        ta.value = textToCopy;
         document.body.appendChild(ta);
         ta.select();
         document.execCommand('copy');
@@ -3567,7 +3599,7 @@ function PromptLabTab({ onApplyToDesign }) {
             <div className="text-xs font-black text-yellow-300 uppercase tracking-wide">Prompt Lab</div>
             <h2 className="mt-1 text-2xl font-black text-white">提示詞庫</h2>
             <p className="mt-2 text-sm text-slate-300 leading-relaxed">
-              共 {totalCount || 116} 條 prompt · CC BY 4.0 · 以 gallery-index.json 載入 18 個分類。
+              共 {totalCount || 116} 條 prompt · CC BY 4.0 · 以 gallery-index.json 載入 17 個分類。
             </p>
           </div>
           <div className="rounded-xl border border-slate-700 bg-slate-950/55 p-3 text-xs text-slate-300 min-w-[240px]">
