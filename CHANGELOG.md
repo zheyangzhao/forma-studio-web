@@ -1,7 +1,45 @@
 # Forma Studio Web v2.0 CHANGELOG
 
-> 本檔案紀錄 `web/forma-studio-v2.html` 從 v1.1 baseline 到 Phase B Sprint 4 的重做歷程。
+> 本檔案紀錄 `web/forma-studio-v2.html` 從 v1.1 baseline 到 v2.0 RC1 cleanup 的重做歷程。
 > `web/forma-studio.html` 是 v1.1 凍結版，規則見 `docs/CONTRACT-v1.1-frozen.md`。
+
+---
+
+## v2.0 RC1 cleanup（2026-05-02）
+
+完成 Final Review §八 指定的 P1-2 / P1-3 / P1-4 / P1-5 / P1-9。
+`web/forma-studio-v2.html` 從 Final Review 時的 6270 行降到 6182 行；`web/forma-studio.html` 維持 v1.1 frozen，不修改。
+
+- P1-2：memoize Smart quick audit / similar examples、Design gallery filters、Prompt Lab visible prompts。
+- P1-3：補 Smart / Design 檔案移除按鈕與設定面板關閉按鈕的 accessible name。
+- P1-4：刪除 v2 未用 `TagSelector`、`ApiKeyBar`、Smart `done` state、Design `sec2Done`。
+- P1-5：穩定 Design `goStep`、Audit `pushHistory`、pending payload consume callbacks，補 useEffect dependencies。
+- P1-9：同步 README / CHANGELOG 到 Phase C、Final Review 與 RC1 現況。
+
+未納入 RC1 cleanup：P1-1 pendingPayload schema、P1-6 master spec helper 化、P1-7 新 coverage、P1-8 source split。
+
+## Final Review（2026-05-02）
+
+新增 `docs/FINAL-REVIEW-2026-05-02.md`，靜態審視 v2.0 Phase C 後狀態。
+Review 確認 P0 = 0、v1.1 frozen 契約維持、v2 主程式 6270 行、repo 10 個 Playwright spec，最新 C-3/C-4/C-5 spec 記錄 68 個驗證步驟。
+
+## Phase C：Smart 4-step glow flow
+
+將 `智慧製圖` 從單純 prompt 產生器升級為 4 區塊分流入口：輸入、AI 判斷、下一步路由、結果落地。
+新增跨 tab landing note，讓 Smart 可導向 Claude Design、NotebookLM、Prompt Lab 與 Audit。
+
+## C-3 + C-4 + C-5
+
+完成 Smart quick audit、Prompt Lab chips / 相近範例、NotebookLM 預填橋接。
+`tests/c3-c4-c5-verify.spec.js` 作為最新 master-style regression，記錄 68 個驗證步驟。
+
+## C-1 + C-2
+
+補齊 Smart 4-step glow flow 與跨 tab 導向基礎，包含 Step 3 action card、Step 4 route result、Smart 到 Claude Design / Audit / NLM 的 payload 串接。
+
+## Phase C 規劃
+
+新增 `docs/PLAN-phase-c.md`、`docs/PLAN-c1-c2.md`、`docs/PLAN-c3-c4-c5.md`，把 Smart 重構與 C 系列增強拆成可驗證階段。
 
 ---
 
