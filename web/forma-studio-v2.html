@@ -2499,7 +2499,7 @@ Step 5 · 固化 brand-spec.md（CSS var(--brand-*)）
    TAB B: NotebookLM 智慧指令中樞
    原版 5 步驟流程（完整保留）
 ───────────────────────────────────── */
-function NLMTab({ landingNote, clearLandingNote, goTab, pendingNLMState, onPendingNLMStateConsumed }) {
+function NLMTab({ landingNote, clearLandingNote, goTab, pendingPayload, consumePendingPayload }) {
   const [step, setStep] = useState(1);
   const [task, setTask] = useState('');
   const [domain, setDomain] = useState('');
@@ -2514,24 +2514,23 @@ function NLMTab({ landingNote, clearLandingNote, goTab, pendingNLMState, onPendi
   const ss = n => n<step?'done':n===step?'active':'future';
 
   useEffect(() => {
-    if (!pendingNLMState) return;
-    const nextTask = TASKS_DB.some(t => t.value === pendingNLMState.task) ? pendingNLMState.task : '自由提問';
-    const nextFramework = FRAMEWORKS_DB.some(f => f.value === pendingNLMState.framework) ? pendingNLMState.framework : 'GUIDE 寫作框架';
-    const nextDomain = DOMAINS_DB.some(d => d.value === pendingNLMState.domain) ? pendingNLMState.domain : '自訂領域';
+    if (pendingPayload?.targetTab !== 'nlm' || pendingPayload.kind !== 'nlm-state') return;
+    const payload = pendingPayload.payload || {};
+    const nextTask = TASKS_DB.some(t => t.value === payload.task) ? payload.task : '自由提問';
+    const nextFramework = FRAMEWORKS_DB.some(f => f.value === payload.framework) ? payload.framework : 'GUIDE 寫作框架';
+    const nextDomain = DOMAINS_DB.some(d => d.value === payload.domain) ? payload.domain : '自訂領域';
     setTask(nextTask);
     setDomain(nextDomain);
-    setCustomDomain(nextDomain === '自訂領域'
-      ? (pendingNLMState.customDomain || pendingNLMState.domain || '依使用者輸入')
-      : '');
+    setCustomDomain(nextDomain === '自訂領域' ? (payload.customDomain || payload.domain || '依使用者輸入') : '');
     setFramework(nextFramework);
-    setQueryMode(pendingNLMState.queryMode || '摘要型');
-    if (pendingNLMState.depth) setDepth(pendingNLMState.depth);
-    if (pendingNLMState.tone) setTone(pendingNLMState.tone);
-    if (pendingNLMState.lang) setLang(pendingNLMState.lang);
+    setQueryMode(payload.queryMode || '摘要型');
+    if (payload.depth) setDepth(payload.depth);
+    if (payload.tone) setTone(payload.tone);
+    if (payload.lang) setLang(payload.lang);
     setStep(5);
-    onPendingNLMStateConsumed?.();
+    consumePendingPayload?.('nlm-state');
     setTimeout(()=>document.getElementById('ns5')?.scrollIntoView({behavior:'smooth',block:'center'}), 180);
-  }, [pendingNLMState, onPendingNLMStateConsumed]);
+  }, [pendingPayload, consumePendingPayload]);
 
   const Badge = ({n}) => {
     const s=ss(n);
@@ -3580,7 +3579,7 @@ function SlidePane() {
   );
 }
 
-function DesignTab({ pendingDesignPrompt, onPendingDesignPromptConsumed, landingNote, clearLandingNote, goTab }) {
+function DesignTab({ pendingPayload, consumePendingPayload, landingNote, clearLandingNote, goTab }) {
   const { key: apiKey } = useContext(ApiCtx);
 
   /* ─── Step 協調 ─── */
@@ -3637,17 +3636,20 @@ function DesignTab({ pendingDesignPrompt, onPendingDesignPromptConsumed, landing
   };
 
   useEffect(() => {
-    if (!pendingDesignPrompt) return;
-    setTxt(pendingDesignPrompt.prompt || '');
-    const sourceLabel = pendingDesignPrompt._source === 'audit'
-      ? (pendingDesignPrompt._kind === 'enhanced' ? '已從體檢 & 增強套用 AI 增強版' : '已從體檢 & 增強套用')
-      : pendingDesignPrompt._source === 'style'
+    if (pendingPayload?.targetTab !== 'design' || pendingPayload.kind !== 'design-prompt') return;
+    const payload = pendingPayload.payload || {};
+    setTxt(payload.prompt || '');
+    const sourceLabel = payload.source === 'audit'
+      ? (payload.title === 'AI 增強版 prompt' ? '已從體檢 & 增強套用 AI 增強版' : '已從體檢 & 增強套用')
+      : payload.source === 'style'
         ? '已從風格實驗室套用'
+        : payload.source === 'smart'
+          ? '已從 Smart 套用'
         : '已從提示詞庫套用';
-    setPendingNotice(`${sourceLabel}：${pendingDesignPrompt.title || pendingDesignPrompt.id || 'prompt'}`);
+    setPendingNotice(`${sourceLabel}：${payload.title || payload.id || 'prompt'}`);
     goStep(1);
-    onPendingDesignPromptConsumed?.();
-  }, [pendingDesignPrompt, goStep, onPendingDesignPromptConsumed]);
+    consumePendingPayload?.('design-prompt');
+  }, [pendingPayload, goStep, consumePendingPayload]);
 
   /* ─── 圖像類型卡片（8 種通用類型）─── */
   const categories = [
@@ -4924,7 +4926,7 @@ const AUDIT_SAMPLES = [
   { id:'strong', label:'💪 強例', hint:'70 字 · 引號文字 · 尺寸 · 否定詞', text:'Design a polished mobile finance app UI mockup for a fictional neobank called AURAE, shown on a 1290x2796 smartphone screen, front-facing, with a soft off-white background. Calm palette of deep navy, mint green, warm gray. Top header with in-image text "AURAE", "Good morning, Lina", and "Total balance $12,480.36". Add three summary chips labeled "Income +$4,200", "Spent -$1,830", "Saved 32%". Crisp typography, production-quality mockup. No fake logos, no generic card walls.' },
 ];
 
-function AuditTab({ onApply, pendingText, clearPendingText, landingNote, clearLandingNote, goTab }) {
+function AuditTab({ onApply, pendingPayload, consumePendingPayload, landingNote, clearLandingNote, goTab }) {
   const { key: apiKey } = useContext(ApiCtx);
   const [text, setText] = useState(AUDIT_SAMPLES[0].text);
   const [audit, setAudit] = useState(() => runAudit(AUDIT_SAMPLES[0].text));
@@ -4949,6 +4951,8 @@ function AuditTab({ onApply, pendingText, clearPendingText, landingNote, clearLa
   const isDemoSample = t => AUDIT_SAMPLES.some(s => s.text === t);
 
   useEffect(() => {
+    if (pendingPayload?.targetTab !== 'audit' || pendingPayload.kind !== 'audit-text') return;
+    const pendingText = pendingPayload.payload?.text || '';
     if (!pendingText) return;
     const a = runAudit(pendingText);
     setText(pendingText);
@@ -4956,8 +4960,8 @@ function AuditTab({ onApply, pendingText, clearPendingText, landingNote, clearLa
     setEnhanced('');
     setEnhanceErr('');
     pushHistory({ id: Date.now()+'', prompt: pendingText, score: a.score, grade: a.grade, word_count: a.wordCount, created_at: new Date().toISOString(), source: 'bridge' });
-    clearPendingText?.();
-  }, [pendingText, pushHistory, clearPendingText]);
+    consumePendingPayload?.('audit-text');
+  }, [pendingPayload, pushHistory, consumePendingPayload]);
 
   const loadSample = s => {
     setText(s.text);
@@ -5967,10 +5971,7 @@ function SettingsPanel({ open, onClose }) {
 function App() {
   const [tab,    setTab]    = useState(() => validateTabId(LS.getStr('last-tab', 'smart')));
   const [apiKey, setApiKey] = useState('');   // 預設 session-only；使用者 opt-in 才存 localStorage
-  const [pendingDesignPrompt, setPendingDesignPrompt] = useState(null);
-  const [pendingNLMState, setPendingNLMState] = useState(null);
-  const [pendingAuditText, setPendingAuditText] = useState(null);
-  const [landingNote, setLandingNote] = useState(null);
+  const [pendingPayload, setPendingPayload] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const tabs=[
@@ -5982,61 +5983,54 @@ function App() {
     {id:'style', label:'🎬 風格實驗室'},
   ];
 
+  const normalizeSourceTab = useCallback(source => tabs.some(t => t.id === source) ? source : tab, [tab]);
+  const noteFor = (targetTab, sourceTab, note) => note ? { ttlMs: 10000, createdAt: Date.now(), ...note, targetTab, sourceTab } : null;
+
+  const dispatch = useCallback((targetTab, kind='note-only', payload=null, note=null) => {
+    const validTarget = validateTabId(targetTab);
+    const sourceTab = normalizeSourceTab(note?.sourceTab);
+    setTab(validTarget);
+    LS.setStr('last-tab', validTarget);
+    setPendingPayload({ targetTab: validTarget, sourceTab, kind, payload, note: noteFor(validTarget, sourceTab, note) });
+  }, [normalizeSourceTab]);
+
   const goTab = useCallback((nextTab, note=null) => {
-    const validTab = validateTabId(nextTab);
-    const validTarget = validateTabId(note?.targetTab || validTab);
-    if (validTarget === 'audit' && note?.prompt) {
-      setPendingAuditText(note.prompt);
-    }
-    setTab(validTab);
-    LS.setStr('last-tab', validTab);
-    if (note) {
-      setLandingNote({
-        ttlMs: 10000,
-        createdAt: Date.now(),
-        ...note,
-        targetTab: validTarget,
-      });
-    } else {
-      setLandingNote(prev => prev && prev.targetTab === validTab ? prev : null);
-    }
-  }, []);
+    const validTarget = validateTabId(note?.targetTab || nextTab);
+    const kind = validTarget === 'audit' && note?.prompt ? 'audit-text' : 'note-only';
+    const payload = kind === 'audit-text' ? { text: note.prompt, source: normalizeSourceTab(note?.sourceTab) } : null;
+    dispatch(nextTab, kind, payload, note);
+  }, [dispatch, normalizeSourceTab]);
 
   const sendPromptToAudit = useCallback((prompt, sourceLabel='其他頁籤') => {
     if (!prompt?.trim()) return;
-    goTab('audit', {
+    dispatch('audit', 'audit-text', { text: prompt, source: tab }, {
       targetTab:'audit',
-      sourceTab:sourceLabel,
+      sourceTab:tab,
       sourceLabel,
       title:`來自${sourceLabel}的 prompt`,
       body:'已帶入體檢 & 增強頁，請看 8 維度分數與可補強處。',
-      prompt,
       tone:'amber',
     });
-  }, [goTab]);
+  }, [dispatch, tab]);
 
   useEffect(() => {
-    if (!landingNote?.ttlMs) return;
-    const timer = setTimeout(() => setLandingNote(cur => cur === landingNote ? null : cur), landingNote.ttlMs);
+    const note = pendingPayload?.note;
+    if (!note?.ttlMs) return;
+    const timer = setTimeout(() => setPendingPayload(cur => cur?.note !== note ? cur : (cur.payload ? { ...cur, note: null } : null)), note.ttlMs);
     return () => clearTimeout(timer);
-  }, [landingNote]);
+  }, [pendingPayload]);
 
-  const clearLandingNote = useCallback(() => setLandingNote(null), []);
-  const consumePendingDesignPrompt = useCallback(() => setPendingDesignPrompt(null), []);
-  const consumePendingNLMState = useCallback(() => setPendingNLMState(null), []);
-  const clearPendingAuditText = useCallback(() => setPendingAuditText(null), []);
+  const landingNote = pendingPayload?.note || null;
+  const clearLandingNote = useCallback(() => setPendingPayload(cur => !cur ? null : (cur.payload ? { ...cur, note: null } : null)), []);
+  const consumePendingPayload = useCallback(kind => {
+    setPendingPayload(cur => {
+      if (!cur || cur.kind !== kind) return cur;
+      return cur.note ? { ...cur, kind: 'note-only', payload: null } : null;
+    });
+  }, []);
 
   const applyPromptToDesign = promptItem => {
-    setPendingDesignPrompt({
-      id: promptItem.id,
-      title: promptItem.title,
-      prompt: promptItem.prompt,
-      categorySlug: promptItem.categorySlug,
-      categoryTitle: promptItem.categoryTitle,
-      sourceRepo: promptItem.sourceRepo,
-      sourceLicense: promptItem.sourceLicense,
-    });
-    goTab('design', {
+    dispatch('design', 'design-prompt', { id: promptItem.id, title: promptItem.title, prompt: promptItem.englishPrompt || promptItem.prompt, source: 'promptlab' }, {
       targetTab: 'design',
       sourceTab: 'promptlab',
       sourceLabel: 'Prompt Lab 提示詞庫',
@@ -6047,17 +6041,8 @@ function App() {
   };
 
   const applyAuditToDesign = (text, kind) => {
-    setPendingDesignPrompt({
-      id: `audit-${kind || 'original'}`,
-      title: kind === 'enhanced' ? 'AI 增強版 prompt' : 'Audit 原始 prompt',
-      prompt: text,
-      _source: 'audit',
-      _kind: kind,
-    });
-    goTab('design', {
-      targetTab:'design',
-      sourceTab:'audit',
-      sourceLabel:'體檢 & 增強',
+    dispatch('design', 'design-prompt', { id: `audit-${kind || 'original'}`, title: kind === 'enhanced' ? 'AI 增強版 prompt' : 'Audit 原始 prompt', prompt: text, source: 'audit' }, {
+      targetTab:'design', sourceTab:'audit', sourceLabel:'體檢 & 增強',
       title: kind === 'enhanced' ? '已套用 AI 增強版 prompt' : '已套用體檢 prompt',
       body:'目標：Claude Design Step 1。已預填從 Audit 帶回的 prompt，可先檢查內容再繼續設計流程。',
       tone: kind === 'enhanced' ? 'emerald' : 'amber',
@@ -6065,62 +6050,30 @@ function App() {
   };
 
   const applyStyleToDesign = text => {
-    setPendingDesignPrompt({
-      id: 'style-studio-prompt',
-      title: 'Style Studio 英文 prompt',
-      prompt: text,
-      _source: 'style',
-    });
-    goTab('design', {
-      targetTab:'design',
-      sourceTab:'style',
-      sourceLabel:'風格實驗室',
-      title:'已套用風格實驗室組好的英文 prompt',
-      body:'目標：Claude Design Step 1。已預填由 5 類別 chips 組好的英文 prompt，可先檢查內容再繼續設計流程。',
-      tone:'amber',
+    dispatch('design', 'design-prompt', { id: 'style-studio-prompt', title: 'Style Studio 英文 prompt', prompt: text, source: 'style' }, {
+      targetTab:'design', sourceTab:'style', sourceLabel:'風格實驗室', title:'已套用風格實驗室組好的英文 prompt',
+      body:'目標：Claude Design Step 1。已預填由 5 類別 chips 組好的英文 prompt，可先檢查內容再繼續設計流程。', tone:'amber',
     });
   };
 
   const applySmartToDesign = text => {
-    setPendingDesignPrompt({
-      id: 'smart-c2-prompt',
-      title: 'Smart 生成 prompt',
-      prompt: text,
-      _source: 'smart',
-    });
-    goTab('design', {
-      targetTab:'design',
-      sourceTab:'smart',
-      sourceLabel:'Smart 智慧製圖',
-      title:'已從 Smart 帶入 prompt',
-      body:'已帶入 Claude Design Step 1，可用 4 區塊 glow 精修風格、受眾、平台與輸出規格。',
-      tone:'cyan',
+    dispatch('design', 'design-prompt', { id: 'smart-c2-prompt', title: 'Smart 生成 prompt', prompt: text, source: 'smart' }, {
+      targetTab:'design', sourceTab:'smart', sourceLabel:'Smart 智慧製圖', title:'已從 Smart 帶入 prompt',
+      body:'已帶入 Claude Design Step 1，可用 4 區塊 glow 精修風格、受眾、平台與輸出規格。', tone:'cyan',
     });
   };
 
   const applySmartToNLM = state => {
-    setPendingNLMState(state);
-    goTab('nlm', {
-      targetTab:'nlm',
-      sourceTab:'smart',
-      sourceLabel:'Smart 智慧製圖',
-      title:'已從 Smart 建議進 NotebookLM 完整流程',
-      body:'已從 Smart 預填 NotebookLM 前 4 步：task / domain / framework / tone。可直接到 Step 5 產生指令，或回前面修改。',
-      tone:'cyan',
-      prompt:state.prompt,
-      prefilled:true,
+    dispatch('nlm', 'nlm-state', { task: state.task, domain: state.domain, framework: state.framework, tone: state.tone, queryMode: state.queryMode, customDomain: state.customDomain, depth: state.depth, lang: state.lang }, {
+      targetTab:'nlm', sourceTab:'smart', sourceLabel:'Smart 智慧製圖', title:'已從 Smart 建議進 NotebookLM 完整流程',
+      body:'已從 Smart 預填 NotebookLM 前 4 步：task / domain / framework / tone。可直接到 Step 5 產生指令，或回前面修改。', tone:'cyan', prompt:state.prompt, prefilled:true,
     });
   };
 
   const sendStyleToAudit = text => {
-    goTab('audit', {
-      targetTab:'audit',
-      sourceTab:'style',
-      sourceLabel:'風格實驗室',
-      title:'來自風格實驗室的英文 prompt',
-      body:'已帶入體檢 & 增強頁，請看 8 維度分數與可補強處。',
-      prompt:text,
-      tone:'amber',
+    dispatch('audit', 'audit-text', { text, source: 'style' }, {
+      targetTab:'audit', sourceTab:'style', sourceLabel:'風格實驗室', title:'來自風格實驗室的英文 prompt',
+      body:'已帶入體檢 & 增強頁，請看 8 維度分數與可補強處。', tone:'amber',
     });
   };
 
@@ -6159,16 +6112,10 @@ function App() {
         </header>
 
         {tab==='smart'  && <SmartTab goTab={goTab} onSendAudit={sendPromptToAudit} onApplyToDesign={applySmartToDesign} onApplyToNLM={applySmartToNLM}/>}
-        {tab==='nlm'    && <NLMTab landingNote={landingNote} clearLandingNote={clearLandingNote} goTab={goTab} pendingNLMState={pendingNLMState} onPendingNLMStateConsumed={consumePendingNLMState}/>}
-        {tab==='design' && <DesignTab
-          pendingDesignPrompt={pendingDesignPrompt}
-          onPendingDesignPromptConsumed={consumePendingDesignPrompt}
-          landingNote={landingNote}
-          clearLandingNote={clearLandingNote}
-          goTab={goTab}
-        />}
+        {tab==='nlm'    && <NLMTab landingNote={landingNote} clearLandingNote={clearLandingNote} goTab={goTab} pendingPayload={pendingPayload} consumePendingPayload={consumePendingPayload}/>}
+        {tab==='design' && <DesignTab pendingPayload={pendingPayload} consumePendingPayload={consumePendingPayload} landingNote={landingNote} clearLandingNote={clearLandingNote} goTab={goTab}/>}
         {tab==='promptlab' && <PromptLabTab onApplyToDesign={applyPromptToDesign} goTab={goTab} landingNote={landingNote} clearLandingNote={clearLandingNote}/>}
-        {tab==='audit'  && <AuditTab onApply={applyAuditToDesign} pendingText={pendingAuditText} clearPendingText={clearPendingAuditText} landingNote={landingNote} clearLandingNote={clearLandingNote} goTab={goTab}/>}
+        {tab==='audit'  && <AuditTab onApply={applyAuditToDesign} pendingPayload={pendingPayload} consumePendingPayload={consumePendingPayload} landingNote={landingNote} clearLandingNote={clearLandingNote} goTab={goTab}/>}
         {tab==='style'  && <StyleStudioTab onApply={applyStyleToDesign} onSendAudit={sendStyleToAudit}/>}
       </div>
       <SettingsPanel open={settingsOpen} onClose={()=>setSettingsOpen(false)}/>
