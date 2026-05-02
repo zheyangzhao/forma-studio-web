@@ -5133,6 +5133,8 @@ function AuditTab({ onApply, pendingPayload, consumePendingPayload, landingNote,
           或自己貼 / 輸入 prompt（修改後會自動清掉舊體檢結果，記得按「重新體檢」）：
         </div>
         <textarea
+          data-testid="audit-prompt-input"
+          aria-label="Audit prompt input"
           value={text}
           onChange={e=>{ setText(e.target.value); if (audit) setAudit(null); }}
           placeholder='例：Design a grand opening poster for "AURORA CAFE". In-image text "Opening 12.15", "Free latte first 100 guests". Size: portrait 1024x1536. Warm editorial cafe palette, natural daylight, no fake logos, no generic card walls.'
@@ -5150,10 +5152,13 @@ function AuditTab({ onApply, pendingPayload, consumePendingPayload, landingNote,
 
       <div className="flex flex-wrap gap-2 items-center">
         <button onClick={runCheck} disabled={!text.trim()}
+          data-testid="audit-run-check"
           className="px-4 py-2 rounded-lg text-sm font-bold bg-yellow-500 hover:bg-yellow-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-900 transition-all">
           {audit ? '🔄 重新體檢' : '🩺 開始體檢'}
         </button>
         <button onClick={runEnhance} disabled={!text.trim() || enhancing}
+          data-testid="audit-ai-enhance"
+          aria-label={apiKey ? 'AI 增強 prompt' : 'AI 增強 prompt，需先設定 API Key'}
           title={apiKey ? '用 GPT-4o-mini 把 prompt 改寫成更完整版本' : '需先在右上角設定 API Key'}
           className="px-4 py-2 rounded-lg text-sm font-bold bg-purple-500 hover:bg-purple-400 disabled:bg-slate-800 disabled:text-slate-600 text-white transition-all">
           {enhancing ? '✨ AI 增強中...' : (apiKey ? '✨ AI 增強（GPT 改寫）' : '🔒 AI 增強（需先設 API Key）')}
@@ -5234,7 +5239,7 @@ function AuditTab({ onApply, pendingPayload, consumePendingPayload, landingNote,
       )}
 
       {enhanced && (
-        <div className="rounded-xl border border-purple-500/40 bg-purple-500/5 p-4">
+        <div data-testid="audit-enhanced-output" className="rounded-xl border border-purple-500/40 bg-purple-500/5 p-4">
           <div className="flex items-center justify-between gap-3 mb-2">
             <div className="text-sm font-bold text-purple-300">✨ AI 增強版</div>
             <CopyBtn text={enhanced} sm/>
@@ -5979,7 +5984,9 @@ function SettingsPanel({ open, onClose }) {
 ───────────────────────────────────── */
 function App() {
   const [tab,    setTab]    = useState(() => validateTabId(LS.getStr('last-tab', 'smart')));
-  const [apiKey, setApiKey] = useState('');   // 預設 session-only；使用者 opt-in 才存 localStorage
+  const [apiKey, setApiKey] = useState(() => (
+    LS.getStr('api-key-remember', 'false') === 'true' ? LS.getStr('api-key', '') : ''
+  ));   // 預設 session-only；使用者 opt-in 才存 localStorage
   const [pendingPayload, setPendingPayload] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
