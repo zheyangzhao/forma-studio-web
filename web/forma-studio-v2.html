@@ -1246,7 +1246,7 @@ function ApiKeyInline({ openSettings }) {
 
   return (
     <div className="relative">
-      <button onClick={()=>{ setDraft(key); setOpen(o=>!o); }}
+      <button tabIndex={0} onClick={()=>{ setDraft(key); setOpen(o=>!o); }}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${key?'border-emerald-600/50 bg-emerald-900/20 text-emerald-400':'border-slate-700 bg-slate-800/50 text-slate-500 hover:text-slate-300 hover:border-slate-500'}`}>
         <span>{key?'🔑':'🔒'}</span>
         <span className="hidden sm:inline">{key?(persistedKeyExists?'API Key 已記住':'API Key 已設定'):'設定 API Key'}</span>
@@ -5827,6 +5827,15 @@ function SettingsPanel({ open, onClose }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey(k => k + 1);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = e => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   const apiRemember = LS.getStr('api-key-remember', 'false') === 'true';
@@ -6098,12 +6107,12 @@ function App() {
             {/* 頁籤列 */}
             <div className="flex border-t border-slate-800 overflow-x-auto">
               {tabs.map(t=>(
-                <button key={t.id} onClick={()=>goTab(t.id)}
+                <button key={t.id} tabIndex={0} onClick={()=>goTab(t.id)}
                   className={`px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all ${tab===t.id?'tab-on':'tab-off'}`}>
                   {t.label}
                 </button>
               ))}
-              <button onClick={()=>setSettingsOpen(true)}
+              <button tabIndex={0} onClick={()=>setSettingsOpen(true)}
                 className="ml-auto px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-all tab-off">
                 ⚙️ 設定
               </button>
