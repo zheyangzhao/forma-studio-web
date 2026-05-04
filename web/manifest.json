@@ -1,8 +1,10 @@
 {
-  "name": "Forma Studio",
-  "short_name": "Forma",
+  "name": "Forma Studio v2",
+  "short_name": "Forma v2",
   "description": "AI 設計提示詞工作坊 · Claude Design · NotebookLM · GPT Image 2",
-  "start_url": "./forma-studio.html",
+  "id": "./forma-studio-v2.html",
+  "start_url": "./forma-studio-v2.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#facc15",

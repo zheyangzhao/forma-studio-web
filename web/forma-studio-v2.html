@@ -49,10 +49,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 ::-webkit-scrollbar-thumb{ background:#475569; border-radius:3px; }
 .tab-on  { border-bottom:2px solid #facc15; color:#facc15; }
 .tab-off { border-bottom:2px solid transparent; color:#94a3b8; }
+.tab-on,.tab-off{ transition:color .18s ease,border-color .18s ease,transform .18s ease,text-shadow .18s ease; }
+.tab-on:hover,.tab-off:hover{ transform:translateY(-1px) scale(1.015); text-shadow:0 0 14px rgba(250,204,21,.22); }
 .tab-off:hover{ color:#cbd5e1; }
 .sub-on  { background:rgba(250,204,21,.12); border-color:#facc15; color:#fde68a; }
 .sub-off { background:rgba(30,41,59,.5); border-color:#334155; color:#94a3b8; }
 .sub-off:hover{ border-color:#475569; color:#cbd5e1; }
+.micro-interact{ transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background-color .18s ease,color .18s ease; }
+.micro-interact:hover:not(:disabled){ transform:translateY(-1px) scale(1.01); box-shadow:0 0 18px rgba(250,204,21,.12); }
+@media (prefers-reduced-motion: reduce) {
+  .tab-on,.tab-off,.micro-interact{ transition:none; }
+  .tab-on:hover,.tab-off:hover,.micro-interact:hover:not(:disabled){ transform:none; }
+}
 </style>
 
 <!-- v2.5: prompt gallery placeholder（build-time 由 tools/inline_gallery.py 注入內容；空 {} 時自動 fallback 到 v1.0 行為）-->
@@ -153,6 +161,62 @@ const LS = {
 
 const VALID_TAB_IDS = ['smart', 'design', 'nlm', 'promptlab', 'audit', 'style'];
 const validateTabId = id => id === 'plab' ? 'promptlab' : (VALID_TAB_IDS.includes(id) ? id : 'smart');
+const SHORTCUT_TAB_IDS = ['smart', 'design', 'nlm', 'promptlab', 'audit', 'style'];
+const PROMPT_RUNTIME_CACHE = 'forma-studio-prompt-library-v2.2';
+
+function visibleFocusable(el) {
+  if (!el || el.disabled || el.getAttribute('aria-hidden') === 'true') return false;
+  const rect = el.getBoundingClientRect();
+  const style = window.getComputedStyle(el);
+  return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+}
+
+function focusPrimaryInput() {
+  const selectors = [
+    'main textarea:not([disabled])',
+    'main input[aria-label="搜尋提示詞"]:not([disabled])',
+    'main input[type="text"]:not([disabled])',
+  ];
+  for (const selector of selectors) {
+    const target = [...document.querySelectorAll(selector)].find(visibleFocusable);
+    if (target) {
+      target.focus();
+      if (typeof target.select === 'function') target.select();
+      return true;
+    }
+  }
+  return false;
+}
+
+function emitOfflineNotice(type, detail = {}) {
+  window.dispatchEvent(new CustomEvent('forma-offline-notice', { detail:{ type, ...detail } }));
+}
+
+async function fetchJsonWithRuntimeCache(url) {
+  const canCache = typeof caches !== 'undefined' && location.protocol !== 'file:';
+  try {
+    const res = await fetch(url, { cache:'no-store' });
+    if (!res.ok) throw new Error(`${url} 載入失敗：HTTP ${res.status}`);
+    const copy = res.clone();
+    const data = await res.json();
+    if (canCache) {
+      caches.open(PROMPT_RUNTIME_CACHE)
+        .then(cache => cache.put(url, copy))
+        .catch(() => {});
+    }
+    return { data, fromCache:false };
+  } catch (error) {
+    if (canCache) {
+      const cached = await caches.match(url).catch(() => null);
+      if (cached) {
+        emitOfflineNotice('cache-hit', { url });
+        return { data: await cached.json(), fromCache:true };
+      }
+    }
+    emitOfflineNotice('network-fail', { url });
+    throw error;
+  }
+}
 
 /* ── v2.5: Prompt Gallery loader（DOM-based，保持單檔特性）── */
 /* 讀 <script id="forma-gallery"> 區塊；空或解析失敗 → 回退 v1.0 行為 */
@@ -464,7 +528,7 @@ function NextStepCard({ tone='emerald', title, body, steps=[], actions=[], done,
               onClick={action.disabledReason || action.kind === 'disabled' ? undefined : action.onClick}
               title={action.disabledReason || action.title || ''}
               disabled={!!action.disabledReason || action.kind === 'disabled'}
-              className={`rounded-lg px-3 py-2 text-xs font-bold transition-all ${actionClass(action)}`}>
+              className={`micro-interact rounded-lg px-3 py-2 text-xs font-bold transition-all ${actionClass(action)}`}>
               {action.icon ? `${action.icon} ` : ''}{action.label}
             </button>
           ))}
@@ -487,6 +551,17 @@ function SubTab({ id, label, cur, set }) {
 /* ── Chip：亮起選項卡（可點換下拉）── */
 function Chip({ label, glow, note, opts, val, onPick }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = e => { if (e.key === 'Escape') setOpen(false); };
+    const closeAny = () => setOpen(false);
+    window.addEventListener('keydown', close);
+    window.addEventListener('forma-escape', closeAny);
+    return () => {
+      window.removeEventListener('keydown', close);
+      window.removeEventListener('forma-escape', closeAny);
+    };
+  }, [open]);
   return (
     <div className="relative">
       <button onClick={()=>opts?setOpen(o=>!o):null}
@@ -518,7 +593,7 @@ function Card({ sel, onClick, icon, title, desc, sm }) {
   return (
     <button onClick={onClick}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      className={`relative text-left rounded-lg border-2 transition-all ${sm?'p-2.5':'p-3'} ${sel?'border-yellow-400 bg-yellow-400/10':'border-slate-600 bg-slate-800/50 hover:border-slate-400'}`}>
+      className={`micro-interact relative text-left rounded-lg border-2 transition-all ${sm?'p-2.5':'p-3'} ${sel?'border-yellow-400 bg-yellow-400/10':'border-slate-600 bg-slate-800/50 hover:border-slate-400'}`}>
       {icon && <div className={`${sm?'text-base':'text-xl'} mb-1`}>{icon}</div>}
       <div className={`font-bold ${sm?'text-xs':'text-sm'} text-slate-100`}>{title}</div>
       {!sm && desc && <div className="text-xs text-slate-500 mt-0.5 leading-tight line-clamp-1">{desc}</div>}
@@ -1220,6 +1295,18 @@ function ApiKeyInline({ openSettings }) {
     /* eslint-disable-next-line */
   }, []);
 
+  useEffect(() => {
+    if (!open) return;
+    const close = e => { if (e.key === 'Escape') setOpen(false); };
+    const closeAny = () => setOpen(false);
+    window.addEventListener('keydown', close);
+    window.addEventListener('forma-escape', closeAny);
+    return () => {
+      window.removeEventListener('keydown', close);
+      window.removeEventListener('forma-escape', closeAny);
+    };
+  }, [open]);
+
   const save = () => {
     const k = draft.trim();
     setKey(k);
@@ -1247,7 +1334,7 @@ function ApiKeyInline({ openSettings }) {
   return (
     <div className="relative">
       <button tabIndex={0} onClick={()=>{ setDraft(key); setOpen(o=>!o); }}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${key?'border-emerald-600/50 bg-emerald-900/20 text-emerald-400':'border-slate-700 bg-slate-800/50 text-slate-500 hover:text-slate-300 hover:border-slate-500'}`}>
+        className={`micro-interact flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${key?'border-emerald-600/50 bg-emerald-900/20 text-emerald-400':'border-slate-700 bg-slate-800/50 text-slate-500 hover:text-slate-300 hover:border-slate-500'}`}>
         <span>{key?'🔑':'🔒'}</span>
         <span className="hidden sm:inline">{key?(persistedKeyExists?'API Key 已記住':'API Key 已設定'):'設定 API Key'}</span>
         {key && <span className={`w-1.5 h-1.5 rounded-full ${persistedKeyExists?'bg-amber-400':'bg-emerald-500'}`}/>}
@@ -4350,9 +4437,8 @@ function cleanTranslationMap(value) {
 
 async function loadPromptZhTranslations() {
   try {
-    const res = await fetch('./prompt-library/translations-zh.json', { cache:'no-store' });
-    if (!res.ok) throw new Error(`translations-zh.json 載入失敗：HTTP ${res.status}`);
-    const data = await res.json();
+    const loaded = await fetchJsonWithRuntimeCache('./prompt-library/translations-zh.json');
+    const data = loaded.data;
     if (![2, 3].includes(data?.schema_version)) {
       console.warn('[Forma Studio] translations-zh.json unknown schema_version', data?.schema_version);
     }
@@ -4364,27 +4450,27 @@ async function loadPromptZhTranslations() {
       summaries: cleanTranslationMap(data?.summaries),
       prompts: cleanTranslationMap(data?.prompts),
       schemaVersion: data?.schema_version || null,
+      fromCache: loaded.fromCache,
     };
   } catch (error) {
     console.warn('[Forma Studio] translations-zh.json unavailable; falling back to English prompt library', error);
-    return { titles:{}, summaries:{}, prompts:{}, schemaVersion:null };
+    return { titles:{}, summaries:{}, prompts:{}, schemaVersion:null, fromCache:false };
   }
 }
 
 async function loadPromptLibrary() {
   const indexPromise = (async () => {
-    const indexRes = await fetch('./prompt-library/gallery-index.json', { cache:'no-store' });
-    if (!indexRes.ok) throw new Error(`gallery-index.json 載入失敗：HTTP ${indexRes.status}`);
-    const index = await indexRes.json();
+    const loaded = await fetchJsonWithRuntimeCache('./prompt-library/gallery-index.json');
+    const index = loaded.data;
     if (!Array.isArray(index.categories)) throw new Error('gallery-index.json 缺少 categories array');
-    return index;
+    return { index, fromCache: loaded.fromCache };
   })();
-  const [index, zhTranslations] = await Promise.all([indexPromise, loadPromptZhTranslations()]);
+  const [indexLoaded, zhTranslations] = await Promise.all([indexPromise, loadPromptZhTranslations()]);
+  const { index } = indexLoaded;
 
   const categoryData = await Promise.all(index.categories.map(async meta => {
-    const res = await fetch(`./prompt-library/${meta.file}`, { cache:'no-store' });
-    if (!res.ok) throw new Error(`${meta.file} 載入失敗：HTTP ${res.status}`);
-    return { meta, data: await res.json() };
+    const loaded = await fetchJsonWithRuntimeCache(`./prompt-library/${meta.file}`);
+    return { meta, data: loaded.data, fromCache: loaded.fromCache };
   }));
 
   const prompts = categoryData.flatMap(({ meta, data }) => {
@@ -4442,6 +4528,12 @@ async function loadPromptLibrary() {
     console.warn('[Forma Studio] category count sum mismatch', { categoryCountSum, total_count:index.total_count });
     warnings.push(`分類 count 加總 ${categoryCountSum} 不等於 index total ${index.total_count}`);
   }
+  const cacheHits = [
+    indexLoaded.fromCache ? 'gallery-index.json' : '',
+    zhTranslations.fromCache ? 'translations-zh.json' : '',
+    ...categoryData.filter(c => c.fromCache).map(c => c.meta.file),
+  ].filter(Boolean);
+  if (cacheHits.length) warnings.push(`已使用離線快取載入 ${cacheHits.length} 個 prompt-library JSON`);
 
   return { index, categories:index.categories, prompts, warnings };
 }
@@ -4536,19 +4628,19 @@ function PromptLabCard({ item, expanded, onToggle, onCopy, copied, onApplyToDesi
 
       <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-2">
         <button onClick={onToggle}
-          className="min-w-0 rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200">
+          className="micro-interact min-w-0 rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-yellow-400/60 hover:text-yellow-200">
           {expanded ? '收合' : '展開'}
         </button>
         <button onClick={() => onCopy(item)}
-          className="min-w-0 rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-emerald-400/60 hover:text-emerald-200">
+          className="micro-interact min-w-0 rounded-lg border border-slate-600 px-2 py-2 text-xs font-bold text-slate-200 hover:border-emerald-400/60 hover:text-emerald-200">
           {copied ? '已複製' : '複製 prompt'}
         </button>
         <button onClick={() => onApplyToDesign(item)}
-          className="min-w-0 rounded-lg bg-yellow-500 px-2 py-2 text-xs font-black leading-snug text-slate-900 hover:bg-yellow-400">
+          className="micro-interact min-w-0 rounded-lg bg-yellow-500 px-2 py-2 text-xs font-black leading-snug text-slate-900 hover:bg-yellow-400">
           套用英文 prompt 到 Claude Design（套用到 Claude Design）
         </button>
         <button onClick={() => onSendToAudit?.(item)}
-          className="min-w-0 rounded-lg border border-purple-500/50 bg-purple-500/10 px-2 py-2 text-xs font-black leading-snug text-purple-200 hover:bg-purple-500/20">
+          className="micro-interact min-w-0 rounded-lg border border-purple-500/50 bg-purple-500/10 px-2 py-2 text-xs font-black leading-snug text-purple-200 hover:bg-purple-500/20">
           🩺 送去體檢
         </button>
       </div>
@@ -5824,6 +5916,20 @@ function LabTab({ goTab }) {
   );
 }
 
+function OfflineBanner({ message, onClose }) {
+  if (!message) return null;
+  return (
+    <div data-testid="offline-banner" className="border-b border-amber-500/30 bg-amber-500/10">
+      <div className="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between gap-3 text-xs text-amber-100">
+        <span className="font-semibold">離線提示：{message}</span>
+        <button type="button" onClick={onClose} className="micro-interact rounded-md border border-amber-400/30 px-2 py-1 text-[11px] text-amber-100 hover:bg-amber-400/10">
+          關閉
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────────────────────────────
    v2.0 Sprint 4: ⚙️ v2 設定面板（modal overlay）
 ───────────────────────────────────── */
@@ -5989,6 +6095,11 @@ function App() {
   ));   // 預設 session-only；使用者 opt-in 才存 localStorage
   const [pendingPayload, setPendingPayload] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [offlineNotice, setOfflineNotice] = useState(() => (
+    typeof navigator !== 'undefined' && navigator.onLine === false
+      ? '目前偵測為離線；Prompt Lab 會優先使用已快取的 JSON。'
+      : ''
+  ));
 
   const tabs=[
     {id:'smart', label:'🖼️ 智慧製圖'},
@@ -6016,6 +6127,58 @@ function App() {
     const payload = kind === 'audit-text' ? { text: note.prompt, source: normalizeSourceTab(note?.sourceTab) } : null;
     dispatch(nextTab, kind, payload, note);
   }, [dispatch, normalizeSourceTab]);
+
+  useEffect(() => {
+    const handleShortcut = e => {
+      const key = e.key?.toLowerCase?.() || '';
+      if (e.key === 'Escape') {
+        setSettingsOpen(false);
+        setOfflineNotice('');
+        setPendingPayload(cur => !cur ? null : (cur.payload ? { ...cur, note: null } : null));
+        window.dispatchEvent(new CustomEvent('forma-escape'));
+        return;
+      }
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (key === 'k') {
+        e.preventDefault();
+        setTimeout(focusPrimaryInput, 0);
+        return;
+      }
+      if (/^[1-7]$/.test(e.key)) {
+        e.preventDefault();
+        const idx = Number(e.key) - 1;
+        const targetTab = SHORTCUT_TAB_IDS[idx];
+        if (targetTab) {
+          goTab(targetTab);
+        } else {
+          setSettingsOpen(true);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [goTab]);
+
+  useEffect(() => {
+    const offline = () => setOfflineNotice('目前偵測為離線；Prompt Lab 會優先使用已快取的 JSON。');
+    const online = () => setOfflineNotice(cur => cur.includes('離線') ? '' : cur);
+    const runtimeNotice = e => {
+      const url = e.detail?.url ? e.detail.url.replace('./prompt-library/', '') : 'Prompt Lab JSON';
+      if (e.detail?.type === 'cache-hit') {
+        setOfflineNotice(`已使用離線快取載入 ${url}。`);
+      } else if (e.detail?.type === 'network-fail') {
+        setOfflineNotice(`網路讀取 ${url} 失敗；若沒有快取會顯示重試選項。`);
+      }
+    };
+    window.addEventListener('offline', offline);
+    window.addEventListener('online', online);
+    window.addEventListener('forma-offline-notice', runtimeNotice);
+    return () => {
+      window.removeEventListener('offline', offline);
+      window.removeEventListener('online', online);
+      window.removeEventListener('forma-offline-notice', runtimeNotice);
+    };
+  }, []);
 
   const sendPromptToAudit = useCallback((prompt, sourceLabel='其他頁籤') => {
     if (!prompt?.trim()) return;
@@ -6126,6 +6289,7 @@ function App() {
             </div>
           </div>
         </header>
+        <OfflineBanner message={offlineNotice} onClose={()=>setOfflineNotice('')}/>
 
         {tab==='smart'  && <SmartTab goTab={goTab} onSendAudit={sendPromptToAudit} onApplyToDesign={applySmartToDesign} onApplyToNLM={applySmartToNLM}/>}
         {tab==='nlm'    && <NLMTab landingNote={landingNote} clearLandingNote={clearLandingNote} goTab={goTab} pendingPayload={pendingPayload} consumePendingPayload={consumePendingPayload}/>}
